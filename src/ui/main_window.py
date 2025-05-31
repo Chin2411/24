@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
 )
 
 
+
 class MainWindow(QMainWindow):
     """Главное окно приложения."""
 
@@ -126,9 +127,43 @@ class MainWindow(QMainWindow):
 
         self.fileTable.itemSelectionChanged.connect(self._preview_selected)
 
+
     def _preview_selected(self) -> None:
         """Обработчик выбора файла в таблице (заглушка)."""
         self.previewStack.setCurrentWidget(self.unsupportedLabel)
 
     def _not_implemented(self) -> None:
         QMessageBox.information(self, "Info", "Функция не реализована.")
+
+    def load_archive(self) -> None:
+        """Open file dialog and extract selected archive in a background thread."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Выберите архив",
+            str(Path.home()),
+            "Archives (*.zip *.rar *.7z *.tar *.tar.gz *.tar.bz2)",
+        )
+        if not file_path:
+            return
+
+        dest = EXTRACTED_FILES_DIR / Path(file_path).stem
+        self.archive_worker = ArchiveExtractWorker(file_path, dest)
+        self.archive_worker.finished.connect(self.on_archive_extracted)
+        self.archive_worker.error.connect(self.on_archive_error)
+        self.archive_worker.start()
+
+    def on_archive_extracted(self, files: list[str]) -> None:
+        for file_path in files:
+            row = self.fileTable.rowCount()
+            self.fileTable.insertRow(row)
+            path = Path(file_path)
+            self.fileTable.setItem(row, 0, QTableWidgetItem(path.name))
+            self.fileTable.setItem(row, 1, QTableWidgetItem(path.suffix.lstrip(".")))
+            self.fileTable.setItem(row, 2, QTableWidgetItem("-"))
+            self.fileTable.setItem(row, 3, QTableWidgetItem("-"))
+            self.fileTable.setItem(row, 4, QTableWidgetItem("-"))
+
+        QMessageBox.information(self, "Успех", "Архив успешно загружен")
+
+    def on_archive_error(self, message: str) -> None:
+        QMessageBox.critical(self, "Ошибка", message)
