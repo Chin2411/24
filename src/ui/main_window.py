@@ -2,27 +2,6 @@
 
 from pathlib import Path
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import (
-    QAbstractItemView,
-    QHBoxLayout,
-    QLabel,
-    QMainWindow,
-    QMessageBox,
-    QPushButton,
-    QSplitter,
-    QStackedWidget,
-    QTableWidget,
-    QTableWidgetItem,
-    QTextEdit,
-    QVBoxLayout,
-    QWidget,
-    QFileDialog,
-)
-
-from config import EXTRACTED_FILES_DIR
-from gui.workers import ArchiveExtractWorker
-
 
 
 class MainWindow(QMainWindow):
@@ -30,71 +9,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Document Processor")
-        self.resize(1024, 768)
 
-        central_widget = QWidget(self)
-        self.setCentralWidget(central_widget)
-
-        main_layout = QVBoxLayout(central_widget)
-
-        # Верхняя панель кнопок
-        top_panel = QHBoxLayout()
-        self.loadArchiveButton = QPushButton("Загрузить архив")
-        self.loadFilesButton = QPushButton("Загрузить файлы")
-        self.clearBufferButton = QPushButton("Очистить буфер")
-        self.runVerificationButton = QPushButton("Выполнить сверку")
-        self.viewLogsButton = QPushButton("Логи")
-        self.referenceButton = QPushButton("Эталонный справочник")
-        for btn in (
-            self.loadArchiveButton,
-            self.loadFilesButton,
-            self.clearBufferButton,
-            self.runVerificationButton,
-            self.viewLogsButton,
-            self.referenceButton,
-        ):
-            top_panel.addWidget(btn)
-        main_layout.addLayout(top_panel)
-
-        # Рабочая область
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-
-        self.fileTable = QTableWidget()
-        self.fileTable.setColumnCount(5)
-        self.fileTable.setHorizontalHeaderLabels(
-            [
-                "Имя файла",
-                "Формат файла",
-                "Язык",
-                "Формат бумаги",
-                "Количество страниц/строк/слайдов",
-            ]
-        )
-        self.fileTable.setSelectionBehavior(
-            QAbstractItemView.SelectionBehavior.SelectRows
-        )
-        self.fileTable.horizontalHeader().setStretchLastSection(True)
-
-        splitter.addWidget(self.fileTable)
-
-        self.textPreview = QTextEdit()
-        self.textPreview.setReadOnly(True)
-        self.imagePreview = QLabel(alignment=Qt.AlignmentFlag.AlignCenter)
-        self.unsupportedLabel = QLabel(
-            "Просмотр не поддерживается", alignment=Qt.AlignmentFlag.AlignCenter
-        )
-        self.previewStack = QStackedWidget()
-        self.previewStack.addWidget(self.textPreview)
-        self.previewStack.addWidget(self.imagePreview)
-        self.previewStack.addWidget(self.unsupportedLabel)
-        self.previewStack.setCurrentWidget(self.unsupportedLabel)
-
-        splitter.addWidget(self.previewStack)
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 5)
-
-        main_layout.addWidget(splitter, 1)
 
         # Нижняя панель кнопок
         bottom_panel = QHBoxLayout()
@@ -143,35 +58,9 @@ class MainWindow(QMainWindow):
     def _not_implemented(self) -> None:
         QMessageBox.information(self, "Info", "Функция не реализована.")
 
-    def load_archive(self) -> None:
-        """Open file dialog and extract selected archive in a background thread."""
+
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Выберите архив",
             str(Path.home()),
-            "Archives (*.zip *.rar *.7z *.tar *.tar.gz *.tar.bz2)",
-        )
-        if not file_path:
-            return
 
-        dest = EXTRACTED_FILES_DIR / Path(file_path).stem
-        self.archive_worker = ArchiveExtractWorker(file_path, dest)
-        self.archive_worker.finished.connect(self.on_archive_extracted)
-        self.archive_worker.error.connect(self.on_archive_error)
-        self.archive_worker.start()
-
-    def on_archive_extracted(self, files: list[str]) -> None:
-        for file_path in files:
-            row = self.fileTable.rowCount()
-            self.fileTable.insertRow(row)
-            path = Path(file_path)
-            self.fileTable.setItem(row, 0, QTableWidgetItem(path.name))
-            self.fileTable.setItem(row, 1, QTableWidgetItem(path.suffix.lstrip(".")))
-            self.fileTable.setItem(row, 2, QTableWidgetItem("-"))
-            self.fileTable.setItem(row, 3, QTableWidgetItem("-"))
-            self.fileTable.setItem(row, 4, QTableWidgetItem("-"))
-
-        QMessageBox.information(self, "Успех", "Архив успешно загружен")
-
-    def on_archive_error(self, message: str) -> None:
-        QMessageBox.critical(self, "Ошибка", message)
