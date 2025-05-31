@@ -1,7 +1,6 @@
-import os
 from pathlib import Path
 import logging
-from typing import Dict, List, Set, FrozenSet
+from typing import Dict, List
 
 # Пути
 BASE_DIR = Path(__file__).parent
@@ -73,15 +72,3 @@ LOGGING = {
         'level': LOG_LEVEL,
     },
 }
-
-# Путь для распаковки архивов (legacy, если используется где-то в коде)
-UNPACK_PATH = "unpacked_files"
-
-# Допустимые расширения файлов (legacy, если используется где-то в коде)
-FILES_EXTENSIONS = [".docx", ".pdf", ".txt"]
-
-# Путь к справочнику (legacy, если используется где-то в коде)
-HANDBOOK_PATH = "handbook.xlsx"
-
-# Импортируем справочные данные
-# from data_analysis import reference_data 
