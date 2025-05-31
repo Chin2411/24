@@ -1,0 +1,21 @@
+{
+    "window": {
+        "width": 1200,
+        "height": 800,
+        "x": 100,
+        "y": 100
+    },
+    "paths": {
+        "last_directory": "",
+        "output_directory": "output"
+    },
+    "processing": {
+        "auto_save": true,
+        "create_backup": true,
+        "max_threads": 4
+    },
+    "ui": {
+        "theme": "dark",
+        "language": "ru"
+    }
+}

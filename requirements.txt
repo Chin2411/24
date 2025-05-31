@@ -1,0 +1,27 @@
+# Основные зависимости
+PyQt6>=6.4.0
+PyPDF2>=3.0.0
+python-docx>=0.8.11
+Pillow>=9.0.0
+pytesseract>=0.3.10
+openpyxl>=3.0.10
+docxtpl>=0.9.0
+rarfile>=4.0
+py7zr>=0.20.0
+langdetect>=1.0.9
+python-magic>=0.4.27
+fuzzywuzzy>=0.18.0
+python-Levenshtein>=0.21.0
+pandas>=1.5.0
+reportlab>=3.6.0
+
+# Зависимости для разработки
+pytest>=7.0.0
+black>=22.0.0
+flake8>=4.0.0
+mypy>=0.910
+pytest-cov>=4.0.0
+pytest-qt>=4.0.0
+
+# Платформо-зависимые зависимости
+pyobjc>=9.0; sys_platform == 'darwin'  # Только для macOS
