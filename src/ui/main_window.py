@@ -1,5 +1,7 @@
 """Main application window."""
 
+from pathlib import Path
+
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -11,10 +13,15 @@ from PyQt6.QtWidgets import (
     QSplitter,
     QStackedWidget,
     QTableWidget,
+    QTableWidgetItem,
     QTextEdit,
     QVBoxLayout,
     QWidget,
+    QFileDialog,
 )
+
+from config import EXTRACTED_FILES_DIR
+from gui.workers import ArchiveExtractWorker
 
 
 
@@ -110,7 +117,6 @@ class MainWindow(QMainWindow):
 
         # Соединяем кнопки с заглушками
         for btn in (
-            self.loadArchiveButton,
             self.loadFilesButton,
             self.clearBufferButton,
             self.runVerificationButton,
@@ -124,6 +130,8 @@ class MainWindow(QMainWindow):
             self.downloadOpisButton,
         ):
             btn.clicked.connect(self._not_implemented)
+
+        self.loadArchiveButton.clicked.connect(self.load_archive)
 
         self.fileTable.itemSelectionChanged.connect(self._preview_selected)
 
