@@ -1,0 +1,21 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+venv/
+ENV/
+
+# Logs and temp files
+*.log
+*.tmp
+logs/
+temp/
+extracted_files/
+
+# MacOS
+.DS_Store
+
+# PyQt UI files build artifacts
+*.pyc
+
