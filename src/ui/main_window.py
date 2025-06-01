@@ -386,7 +386,6 @@ class MainWindow(QMainWindow):
         self.textPreview.clear()
         self.imagePreview.clear()
         self.previewStack.setCurrentWidget(self.unsupportedLabel)
-        self.logger.info("Файл %s удален", path)
         self.logger.info("Буфер очищен")
 
     def _show_file_menu(self, pos) -> None:
