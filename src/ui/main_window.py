@@ -154,6 +154,9 @@ class MainWindow(QMainWindow):
         if not file_path:
             return
 
+        # notify user about chosen archive path
+        QMessageBox.information(self, "Выбран архив", file_path)
+
         dest = EXTRACTED_FILES_DIR / Path(file_path).stem
         self.archive_worker = ArchiveExtractWorker(file_path, dest)
         self.archive_worker.finished.connect(self.on_archive_extracted)
