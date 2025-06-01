@@ -6,6 +6,7 @@ import logging
 import hashlib
 import time
 from concurrent.futures import ProcessPoolExecutor
+import re
 
 from PyPDF2 import PdfReader
 from pdfminer.high_level import extract_text as pdfminer_extract_text
@@ -16,6 +17,9 @@ import numpy as np
 import pytesseract
 import fitz
 import cv2
+from rapidfuzz import process, fuzz
+
+from constants import REFERENCE_NAMES
 
 from config import (
     PDF_IMAGE_DPI,
@@ -119,6 +123,20 @@ def _clean_ocr_text(text: str) -> str:
     return "\n".join(lines)
 
 
+def _valid_text(text: str) -> bool:
+    """Return True if text has at least 20 alphanumeric characters."""
+    return len(re.findall(r"[A-Za-zА-Яа-я0-9]", text)) >= 20
+
+
+def _ocr_pytesseract_psm6(img: Image.Image) -> str:
+    """Run pytesseract with fixed psm=6 and rus+eng languages."""
+    try:
+        return pytesseract.image_to_string(img, lang="rus+eng", config="--psm 6")
+    except Exception as exc:  # pragma: no cover - unexpected errors
+        logger.error("pytesseract error: %s", exc)
+        return ""
+
+
 def _ocr_pytesseract(img: Image.Image) -> str:
     texts = []
     for psm in (6, 3):
@@ -173,11 +191,7 @@ def _ocr_page(page_bytes: bytes) -> str:
     """OCR helper for a single PDF page."""
     img = Image.open(BytesIO(page_bytes))
     img = _preprocess_image(img)
-    text = _ocr_pytesseract(img)
-    if len(text.strip()) < 20:
-        text = _ocr_easyocr(img)
-    if len(text.strip()) < 20:
-        text = _ocr_paddle(img)
+    text = _ocr_pytesseract_psm6(img)
     return _clean_ocr_text(text)
 
 
@@ -354,151 +368,144 @@ def _extract_tables_cv(path: Path, pages: str) -> str:
     return tables_text
 
 
-def _pdf_preview(path: Path) -> tuple[str, str | None, str | None]:
-    """Return text preview for PDF using several fallbacks.
-
-    The function tries multiple extraction methods in the following order:
-    1. ``PyPDF2`` text layer extraction for the first few pages.
-    2. ``pdfminer.six`` extraction if PyPDF2 returned no text.
-    3. ``PyMuPDF`` OCR for scanned pages using ``pytesseract``.
-
-    Raises ``RuntimeError`` if no text could be extracted.
-    """
-
-    PAGE_LIMIT = PREVIEW_PAGE_COUNT
-    MAX_CHARS = 2000
-
-    last_error = ""
-
+def _extract_text_layer(path: Path, page_idxs: list[int], max_chars: int) -> str:
+    """Try to extract text layer using PyPDF2, pdfminer and PyMuPDF."""
+    text = ""
+    # PyPDF2
     try:
         reader = PdfReader(str(path))
-        total_pages = len(reader.pages)
-    except Exception:
-        reader = None
-        total_pages = 0
+        for idx in page_idxs:
+            if idx >= len(reader.pages):
+                break
+            page = reader.pages[idx]
+            text += page.extract_text() or ""
+            if len(text) >= max_chars:
+                text = text[:max_chars]
+                break
+        if _valid_text(text):
+            return text
+    except Exception as exc:  # pragma: no cover - unexpected errors
+        logger.error("PyPDF2 text layer error: %s", exc)
+
+    # pdfminer
+    try:
+        text = pdfminer_extract_text(str(path), page_numbers=page_idxs) or ""
+        text = text[:max_chars]
+        if _valid_text(text):
+            return text
+    except Exception as exc:  # pragma: no cover - unexpected errors
+        logger.error("pdfminer text layer error: %s", exc)
+
+    # PyMuPDF text layer
+    try:
+        doc = fitz.open(str(path))
+        txt = ""
+        for idx in page_idxs:
+            if idx >= len(doc):
+                break
+            txt += doc[idx].get_text()
+            if len(txt) >= max_chars:
+                txt = txt[:max_chars]
+                break
+        doc.close()
+        if _valid_text(txt):
+            return txt
+        return txt
+    except Exception as exc:  # pragma: no cover - unexpected errors
+        logger.error("PyMuPDF text layer error: %s", exc)
+    return text
+
+
+def _extract_key_fields(text: str) -> dict[str, str]:
+    """Find document number, registration number and name in text."""
+    lines = [l.strip() for l in text.splitlines() if re.search(r"[A-Za-zА-Яа-я0-9]{3,}", l)]
+    number = ""
+    reg_number = ""
+    name = ""
+    number_re = re.compile(r"№\s*([\w/-]+)", re.I)
+    reg_re = re.compile(r"регистрац[а-я]*\s*№?\s*([\w/-]+)", re.I)
+    refs = [r["ru"] for r in REFERENCE_NAMES if r.get("ru")]
+    for line in lines:
+        if not number:
+            m = number_re.search(line)
+            if m:
+                number = m.group(1)
+        if not reg_number:
+            m = reg_re.search(line)
+            if m:
+                reg_number = m.group(1)
+        if not name:
+            choice = process.extractOne(line, refs, scorer=fuzz.token_set_ratio)
+            if choice and choice[1] > 80:
+                name = choice[0]
+        if number and reg_number and name:
+            break
+    return {"number": number, "reg_number": reg_number, "name": name}
+
+
+def _pdf_preview(path: Path) -> tuple[str, str | None, str | None]:
+    """Return text preview for PDF with text-layer and OCR fallbacks."""
+
+    MAX_CHARS = 2000
+
+    try:
+        doc = fitz.open(str(path))
+        total_pages = len(doc)
+    except Exception as exc:  # pragma: no cover - unexpected errors
+        logger.error("Failed to open PDF: %s", exc)
+        return "", None, f"Ошибка чтения PDF: {exc}"
 
     page_idxs = list(range(min(PREVIEW_PAGE_COUNT, total_pages)))
     if total_pages > PREVIEW_PAGE_COUNT:
         start = max(total_pages - PREVIEW_PAGE_COUNT, PREVIEW_PAGE_COUNT)
         page_idxs += list(range(start, total_pages))
     page_idxs = sorted(set(page_idxs))
-    pages = ",".join(str(i + 1) for i in page_idxs)
 
-    # --- Try table extraction first ------------------------------------
-    table_text, image, table_err = unpack3(_extract_tables(path, pages))
-    if table_text:
-        _save_cached_preview(path, table_text)
-        return table_text, None, table_err
-    if table_err and image:
-        return "", image, table_err
-
-    # --- Try PyPDF2 ------------------------------------------------------
-    try:
-        text = ""
-        if reader:
-            for idx in page_idxs:
-                if idx >= len(reader.pages):
-                    break
-                page = reader.pages[idx]
-                t = page.extract_text() or ""
-                text += t
-                if len(text) >= MAX_CHARS:
-                    text = text[:MAX_CHARS]
-                    break
-        if len(text.strip()) > 50:
-            return _clean_ocr_text(text.strip()), None
-        last_error = "PyPDF2 не нашёл текст"
-    except Exception as exc:  # pragma: no cover - unexpected errors
-        last_error = f"Ошибка PyPDF2: {exc}"
-        logger.error(last_error)
-
-    # --- Try pdfminer ----------------------------------------------------
-    try:
-        text = pdfminer_extract_text(str(path), page_numbers=page_idxs) or ""
-        text = text[:MAX_CHARS]
-        if len(text.strip()) > 50:
-            return _clean_ocr_text(text.strip()), None
-        last_error = "pdfminer не нашёл текст"
-    except Exception as exc:  # pragma: no cover - unexpected errors
-        last_error = f"Ошибка pdfminer: {exc}"
-        logger.error(last_error)
-
-    pages = ",".join(str(i + 1) for i in page_idxs)
-
-    # --- OCR fallback using PyMuPDF + pytesseract -----------------------
-    text = ""
-    try:
-        doc = fitz.open(str(path))
-        pages_pix: list[bytes] = []
-        for idx in page_idxs:
-            if idx >= len(doc):
-                break
-            page = doc[idx]
-            pix = page.get_pixmap(dpi=PDF_IMAGE_DPI)
-            pages_pix.append(pix.tobytes())
-            if len(pages_pix) == 1:
-                try:
-                    Path("logs").mkdir(exist_ok=True)
-                    Image.open(BytesIO(pix.tobytes())).save(
-                        Path("logs") / f"{path.stem}_page1.png"
-                    )
-                except Exception as exc:  # pragma: no cover - optional
-                    logger.error("Failed to save debug image: %s", exc)
-        doc.close()
-
-        start_all = time.perf_counter()
-        with ProcessPoolExecutor(max_workers=4) as ex:
-            futures = []
-            start_times: list[float] = []
-            for pb in pages_pix:
-                futures.append(ex.submit(_ocr_page, pb))
-                start_times.append(time.perf_counter())
-
-            for idx, fut in enumerate(futures):
-                try:
-                    ocr_text = fut.result()
-                except Exception as exc:
-                    logger.error("OCR task failed for page %s: %s", idx + 1, exc)
-                    continue
-                duration = time.perf_counter() - start_times[idx]
-                if duration > 5:
-                    logger.warning(
-                        "OCR page %s took %.2f sec", idx + 1, duration
-                    )
-                text += ocr_text + "\n"
-                if len(text) >= MAX_CHARS:
-                    text = text[:MAX_CHARS]
-                    break
-        total = time.perf_counter() - start_all
-        logger.info("OCR of %s pages completed in %.2f sec", len(pages_pix), total)
-    except Exception as exc:  # pragma: no cover - unexpected errors
-        last_error = f"Ошибка OCR: {exc}"
-        logger.error(last_error)
-
-    if len(text.strip()) < 50:
-        table_text, _, _ = unpack3(_extract_tables(path, pages))
-        if not table_text:
-            table_text = _extract_tables_cv(path, pages)
-        text += table_text
-
-    if text.strip():
-        cleaned = _clean_ocr_text(text.strip())
+    text = _extract_text_layer(path, page_idxs, MAX_CHARS)
+    if _valid_text(text):
+        cleaned = _clean_ocr_text(text)[:MAX_CHARS]
         _save_cached_preview(path, cleaned)
+        fields = _extract_key_fields(cleaned)
+        logger.info("Key fields extracted: %s", fields)
+        doc.close()
         return cleaned, None, None
 
-    image_path = None
+    # OCR fallback
+    pages_pix: list[bytes] = []
+    for idx in page_idxs:
+        if idx >= len(doc):
+            break
+        page = doc[idx]
+        pix = page.get_pixmap(dpi=PDF_IMAGE_DPI)
+        pages_pix.append(pix.tobytes())
+    doc.close()
+
+    text = ""
+    for pb in pages_pix:
+        text += _ocr_page(pb) + "\n"
+        if len(text) >= MAX_CHARS:
+            text = text[:MAX_CHARS]
+            break
+
+    cleaned = _clean_ocr_text(text)
+    if _valid_text(cleaned):
+        _save_cached_preview(path, cleaned)
+        fields = _extract_key_fields(cleaned)
+        logger.info("Key fields extracted after OCR: %s", fields)
+        return cleaned, None, None
+
+    # Still not readable
+    image_path = str(Path("logs") / f"{path.stem}_preview.png")
     try:
-        doc = fitz.open(str(path))
-        pix = doc[0].get_pixmap(dpi=PDF_IMAGE_DPI)
-        image_path = str(Path("logs") / f"{path.stem}_preview.png")
         Path(image_path).parent.mkdir(exist_ok=True)
-        Image.open(BytesIO(pix.tobytes())).save(image_path)
-        doc.close()
-    except Exception as exc:  # pragma: no cover - unexpected errors
+        if pages_pix:
+            Image.open(BytesIO(pages_pix[0])).save(image_path)
+    except Exception as exc:  # pragma: no cover - optional
         logger.error("Failed to save preview image: %s", exc)
 
-    logger.error("Не удалось корректно распознать таблицу: %s", last_error or "unknown")
-    return "", image_path, last_error or "Не удалось корректно распознать таблицу"
+    err = "Не удалось распознать текст документа, проверь исходник"
+    logger.error(err)
+    return "", image_path, err
 
 
 def _docx_preview(path: Path) -> str:
