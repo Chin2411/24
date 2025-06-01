@@ -92,12 +92,29 @@ def _preprocess_image(img: Image.Image) -> Image.Image:
     return gray
 
 
+def _clean_ocr_text(text: str) -> str:
+    """Remove unreadable characters and very short lines from OCR output."""
+    import re
+
+    lines = []
+    for line in text.splitlines():
+        line = re.sub(r"[^\w\s,\.№-]", "", line)
+        line = line.strip()
+        if len(line) < 2:
+            continue
+        if re.fullmatch(r"[A-Za-zА-Яа-я]{1,2}", line):
+            continue
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def _ocr_pytesseract(img: Image.Image) -> str:
     texts = []
-    for psm in (6, 4, 11, 12):
+    for psm in (6, 3):
         try:
             conf = f"--psm {psm}"
             t = pytesseract.image_to_string(img, lang="rus+eng", config=conf)
+            t = _clean_ocr_text(t)
             texts.append(t)
         except Exception as exc:  # pragma: no cover - unexpected errors
             logger.error("pytesseract failed for psm %s: %s", psm, exc)
@@ -111,7 +128,8 @@ def _ocr_easyocr(img: Image.Image) -> str:
 
         reader = easyocr.Reader(["ru", "en"], gpu=False)
         result = reader.readtext(np.array(img))
-        return "\n".join(r[1] for r in result)
+        text = "\n".join(r[1] for r in result)
+        return _clean_ocr_text(text)
     except Exception as exc:  # pragma: no cover - optional dependency
         logger.error("EasyOCR error: %s", exc)
     return ""
@@ -125,7 +143,8 @@ def _ocr_paddle(img: Image.Image) -> str:
         ocr = PaddleOCR(use_angle_cls=True, lang="ru")
         result = ocr.ocr(np.array(img), cls=True)
         lines = [line[1][0] for line in result[0]]
-        return "\n".join(lines)
+        text = "\n".join(lines)
+        return _clean_ocr_text(text)
     except Exception as exc:  # pragma: no cover - optional dependency
         logger.error("PaddleOCR error: %s", exc)
     return ""
@@ -140,7 +159,7 @@ def _ocr_page(page_bytes: bytes) -> str:
         text = _ocr_easyocr(img)
     if len(text.strip()) < 20:
         text = _ocr_paddle(img)
-    return text
+    return _clean_ocr_text(text)
 
 
 def _ocr_table_cells(img: Image.Image) -> str:
@@ -194,7 +213,7 @@ def _ocr_table_cells(img: Image.Image) -> str:
             txt = _ocr_pytesseract(cell_img).strip().replace("\n", " ")
             cell_texts.append(txt)
         lines.append(",".join(cell_texts))
-    return "\n".join(lines)
+    return _clean_ocr_text("\n".join(lines))
 
 
 def _ocr_columns(img: Image.Image) -> str:
@@ -222,7 +241,7 @@ def _ocr_columns(img: Image.Image) -> str:
         col_img = _preprocess_image(col_img)
         txt = _ocr_pytesseract(col_img).replace("\n", " ").strip()
         columns_text.append(txt)
-    return "\n".join(columns_text)
+    return _clean_ocr_text("\n".join(columns_text))
 
 
 def _extract_tables(path: Path, pages: str) -> tuple[str, str | None, str | None]:
@@ -366,7 +385,7 @@ def _pdf_preview(path: Path) -> tuple[str, str | None, str | None]:
                     text = text[:MAX_CHARS]
                     break
         if len(text.strip()) > 50:
-            return text.strip(), None
+            return _clean_ocr_text(text.strip()), None
         last_error = "PyPDF2 не нашёл текст"
     except Exception as exc:  # pragma: no cover - unexpected errors
         last_error = f"Ошибка PyPDF2: {exc}"
@@ -377,7 +396,7 @@ def _pdf_preview(path: Path) -> tuple[str, str | None, str | None]:
         text = pdfminer_extract_text(str(path), page_numbers=page_idxs) or ""
         text = text[:MAX_CHARS]
         if len(text.strip()) > 50:
-            return text.strip(), None
+            return _clean_ocr_text(text.strip()), None
         last_error = "pdfminer не нашёл текст"
     except Exception as exc:  # pragma: no cover - unexpected errors
         last_error = f"Ошибка pdfminer: {exc}"
@@ -436,8 +455,9 @@ def _pdf_preview(path: Path) -> tuple[str, str | None, str | None]:
         text += table_text
 
     if text.strip():
-        _save_cached_preview(path, text.strip())
-        return text.strip(), None, None
+        cleaned = _clean_ocr_text(text.strip())
+        _save_cached_preview(path, cleaned)
+        return cleaned, None, None
 
     image_path = None
     try:
@@ -486,6 +506,7 @@ def _image_preview(path: Path) -> str:
                 text = _ocr_easyocr(img)
             if len(text.strip()) < 20:
                 text = _ocr_paddle(img)
+            text = _clean_ocr_text(text)
             if text.strip():
                 return text.strip()
             Path("logs").mkdir(exist_ok=True)
