@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QFileDialog,
 )
-from PyQt6.QtGui import QTextCursor
+from PyQt6.QtGui import QTextCursor, QPalette, QColor
 
 logger = logging.getLogger(__name__)
 
@@ -31,10 +31,18 @@ class LogViewerDialog(QDialog):
         self.resize(800, 600)
 
         layout = QVBoxLayout(self)
-        self.text = QTextEdit()
-        self.text.setReadOnly(True)
-        self.text.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
-        layout.addWidget(self.text)
+        self._text = QTextEdit()
+        self._text.setReadOnly(True)
+        self._text.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+        layout.addWidget(self._text)
+
+        p = self._text.palette()
+        p.setColor(QPalette.ColorRole.Base, QColor("#121212"))
+        p.setColor(QPalette.ColorRole.Text, QColor("#FFFFFF"))
+        self._text.setPalette(p)
+        self._text.setStyleSheet(
+            "font-family: Menlo, monospace; font-size: 11px;"
+        )
 
         btn_layout = QHBoxLayout()
         self.refreshButton = QPushButton("Обновить")
@@ -57,7 +65,7 @@ class LogViewerDialog(QDialog):
             color = "red"
         elif "[WARNING]" in line:
             color = "orange"
-        self.text.append(f'<span style="color:{color}">{line}</span>')
+        self._text.append(f'<span style="color:{color}">{line}</span>')
 
     def _load_log(self) -> None:
         """Internal helper to read log file and display its tail."""
@@ -65,7 +73,7 @@ class LogViewerDialog(QDialog):
         try:
             lines = self.log_file.read_text(encoding="utf-8").splitlines()
         except FileNotFoundError:
-            self.text.setPlainText(
+            self._text.setPlainText(
                 "Лог-файл ещё не создан — выполните действие в программе и нажмите «Обновить»."
             )
             return
@@ -75,10 +83,10 @@ class LogViewerDialog(QDialog):
             return
 
         lines = lines[-self.max_lines :]
-        self.text.clear()
+        self._text.clear()
         for line in lines:
             self._append_colored(line)
-        self.text.moveCursor(QTextCursor.MoveOperation.End)
+        self._text.moveCursor(QTextCursor.MoveOperation.End)
 
     def load_logs(self) -> None:
         """Public slot to refresh log contents."""
@@ -97,7 +105,7 @@ class LogViewerDialog(QDialog):
             return
         try:
             with open(dest_path, "w", encoding="utf-8") as f:
-                f.write(self.text.toPlainText())
+                f.write(self._text.toPlainText())
         except Exception as exc:  # pragma: no cover - runtime errors
             logger.exception("Ошибка сохранения логов: %s", exc)
             QMessageBox.critical(self, "Ошибка", f"Не удалось сохранить логи: {exc}")
