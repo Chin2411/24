@@ -17,7 +17,12 @@ import pytesseract
 import fitz
 import cv2
 
-from config import PDF_IMAGE_DPI, TEMP_DIR
+from config import (
+    PDF_IMAGE_DPI,
+    TEMP_DIR,
+    PREVIEW_PAGE_COUNT,
+    PREVIEW_PARAGRAPH_COUNT,
+)
 from utils import fix_row
 
 
@@ -61,7 +66,13 @@ def _deskew_image(img: Image.Image) -> Image.Image:
         (h, w) = gray.shape[:2]
         center = (w // 2, h // 2)
         M = cv2.getRotationMatrix2D(center, angle, 1.0)
-        rotated = cv2.warpAffine(np.array(img), M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+        rotated = cv2.warpAffine(
+            np.array(img),
+            M,
+            (w, h),
+            flags=cv2.INTER_CUBIC,
+            borderMode=cv2.BORDER_REPLICATE,
+        )
         return Image.fromarray(rotated)
     except Exception as exc:  # pragma: no cover - optional dependency
         logger.error("Deskew failed: %s", exc)
@@ -136,10 +147,18 @@ def _ocr_table_cells(img: Image.Image) -> str:
     """Split table image into cells and run pytesseract on each."""
     cv_img = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2GRAY)
     _, thresh = cv2.threshold(cv_img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    vert_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(1, img.height // 100)))
-    hor_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (max(1, img.width // 100), 1))
-    vert_lines = cv2.dilate(cv2.erode(thresh, vert_kernel, iterations=1), vert_kernel, iterations=1)
-    hor_lines = cv2.dilate(cv2.erode(thresh, hor_kernel, iterations=1), hor_kernel, iterations=1)
+    vert_kernel = cv2.getStructuringElement(
+        cv2.MORPH_RECT, (1, max(1, img.height // 100))
+    )
+    hor_kernel = cv2.getStructuringElement(
+        cv2.MORPH_RECT, (max(1, img.width // 100), 1)
+    )
+    vert_lines = cv2.dilate(
+        cv2.erode(thresh, vert_kernel, iterations=1), vert_kernel, iterations=1
+    )
+    hor_lines = cv2.dilate(
+        cv2.erode(thresh, hor_kernel, iterations=1), hor_kernel, iterations=1
+    )
     grid = cv2.bitwise_and(vert_lines, hor_lines)
     contours, _ = cv2.findContours(grid, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
     boxes = [cv2.boundingRect(c) for c in contours if cv2.contourArea(c) > 100]
@@ -253,7 +272,9 @@ def _extract_tables(path: Path, pages: str) -> tuple[str, str | None, str | None
                     image_path = str(Path("logs") / f"{path.stem}_page{p + 1}.png")
                     Path(image_path).parent.mkdir(exist_ok=True)
                     page.to_image(resolution=PDF_IMAGE_DPI).save(image_path)
-                    last_error = f"Page {p + 1}: не удалось корректно распознать таблицу"
+                    last_error = (
+                        f"Page {p + 1}: не удалось корректно распознать таблицу"
+                    )
                     logger.error(last_error)
         if tables_text:
             error_msg = "; ".join(row_errors) if row_errors else None
@@ -304,12 +325,24 @@ def _pdf_preview(path: Path) -> tuple[str, str | None, str | None]:
     Raises ``RuntimeError`` if no text could be extracted.
     """
 
-    PAGE_LIMIT = 3
+    PAGE_LIMIT = PREVIEW_PAGE_COUNT
     MAX_CHARS = 2000
 
     last_error = ""
 
-    pages = ",".join(str(i + 1) for i in range(PAGE_LIMIT))
+    try:
+        reader = PdfReader(str(path))
+        total_pages = len(reader.pages)
+    except Exception:
+        reader = None
+        total_pages = 0
+
+    page_idxs = list(range(min(PREVIEW_PAGE_COUNT, total_pages)))
+    if total_pages > PREVIEW_PAGE_COUNT:
+        start = max(total_pages - PREVIEW_PAGE_COUNT, PREVIEW_PAGE_COUNT)
+        page_idxs += list(range(start, total_pages))
+    page_idxs = sorted(set(page_idxs))
+    pages = ",".join(str(i + 1) for i in page_idxs)
 
     # --- Try table extraction first ------------------------------------
     table_text, image, table_err = _extract_tables(path, pages)
@@ -321,14 +354,17 @@ def _pdf_preview(path: Path) -> tuple[str, str | None, str | None]:
 
     # --- Try PyPDF2 ------------------------------------------------------
     try:
-        reader = PdfReader(str(path))
         text = ""
-        for page in reader.pages[:PAGE_LIMIT]:
-            t = page.extract_text() or ""
-            text += t
-            if len(text) >= MAX_CHARS:
-                text = text[:MAX_CHARS]
-                break
+        if reader:
+            for idx in page_idxs:
+                if idx >= len(reader.pages):
+                    break
+                page = reader.pages[idx]
+                t = page.extract_text() or ""
+                text += t
+                if len(text) >= MAX_CHARS:
+                    text = text[:MAX_CHARS]
+                    break
         if len(text.strip()) > 50:
             return text.strip(), None
         last_error = "PyPDF2 не нашёл текст"
@@ -338,7 +374,7 @@ def _pdf_preview(path: Path) -> tuple[str, str | None, str | None]:
 
     # --- Try pdfminer ----------------------------------------------------
     try:
-        text = pdfminer_extract_text(str(path), page_numbers=range(PAGE_LIMIT)) or ""
+        text = pdfminer_extract_text(str(path), page_numbers=page_idxs) or ""
         text = text[:MAX_CHARS]
         if len(text.strip()) > 50:
             return text.strip(), None
@@ -347,17 +383,20 @@ def _pdf_preview(path: Path) -> tuple[str, str | None, str | None]:
         last_error = f"Ошибка pdfminer: {exc}"
         logger.error(last_error)
 
-    pages = ",".join(str(i + 1) for i in range(PAGE_LIMIT))
+    pages = ",".join(str(i + 1) for i in page_idxs)
 
     # --- OCR fallback using PyMuPDF + pytesseract -----------------------
     text = ""
     try:
         doc = fitz.open(str(path))
         pages_pix: list[bytes] = []
-        for idx, page in enumerate(doc[:PAGE_LIMIT]):
+        for idx in page_idxs:
+            if idx >= len(doc):
+                break
+            page = doc[idx]
             pix = page.get_pixmap(dpi=PDF_IMAGE_DPI)
             pages_pix.append(pix.tobytes())
-            if idx == 0:
+            if len(pages_pix) == 1:
                 try:
                     Path("logs").mkdir(exist_ok=True)
                     Image.open(BytesIO(pix.tobytes())).save(
@@ -379,9 +418,7 @@ def _pdf_preview(path: Path) -> tuple[str, str | None, str | None]:
                 ocr_text = fut.result()
                 duration = time.perf_counter() - start_times[idx]
                 if duration > 5:
-                    logger.warning(
-                        "OCR page %s took %.2f sec", idx + 1, duration
-                    )
+                    logger.warning("OCR page %s took %.2f sec", idx + 1, duration)
                 text += ocr_text + "\n"
                 if len(text) >= MAX_CHARS:
                     text = text[:MAX_CHARS]
@@ -413,32 +450,28 @@ def _pdf_preview(path: Path) -> tuple[str, str | None, str | None]:
     except Exception as exc:  # pragma: no cover - unexpected errors
         logger.error("Failed to save preview image: %s", exc)
 
-    logger.error(
-        "Не удалось корректно распознать таблицу: %s", last_error or "unknown"
-    )
+    logger.error("Не удалось корректно распознать таблицу: %s", last_error or "unknown")
     return "", image_path, last_error or "Не удалось корректно распознать таблицу"
 
 
 def _docx_preview(path: Path) -> str:
     doc = Document(str(path))
-    text = ""
-    for para in doc.paragraphs:
-        text += para.text + "\n"
-        if len(text) >= 2000:
-            text = text[:2000]
-            break
-    return text.strip()
+    paras = [p.text for p in doc.paragraphs if p.text.strip()]
+    selected = paras[:PREVIEW_PARAGRAPH_COUNT]
+    if len(paras) > PREVIEW_PARAGRAPH_COUNT:
+        selected += paras[-PREVIEW_PARAGRAPH_COUNT:]
+    text = "\n".join(selected)
+    return text.strip()[:2000]
 
 
 def _text_preview(path: Path) -> str:
     lines: list[str] = []
     try:
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
-            for _ in range(50):
-                line = f.readline()
-                if not line:
-                    break
-                lines.append(line)
+            all_lines = f.readlines()
+            lines.extend(all_lines[:PREVIEW_PARAGRAPH_COUNT])
+            if len(all_lines) > PREVIEW_PARAGRAPH_COUNT:
+                lines.extend(all_lines[-PREVIEW_PARAGRAPH_COUNT:])
     except Exception as exc:
         raise RuntimeError(f"Ошибка чтения файла: {exc}")
     return "".join(lines).strip()

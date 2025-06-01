@@ -10,7 +10,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.append(str(ROOT_DIR))
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QPixmap
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
@@ -29,11 +29,12 @@ from PyQt6.QtWidgets import (
     QFileDialog,
 )
 
-from config import EXTRACTED_FILES_DIR
+from config import EXTRACTED_FILES_DIR, FUZZY_THRESHOLD
 from gui.workers import (
     ArchiveExtractWorker,
     FileMetadataWorker,
-    FilePreviewWorker,
+    QuickPreviewWorker,
+    VerificationWorker,
 )
 
 
@@ -96,10 +97,20 @@ class MainWindow(QMainWindow):
         self.unsupportedLabel = QLabel(
             "Просмотр не поддерживается", alignment=Qt.AlignmentFlag.AlignCenter
         )
+        self.verifyTable = QTableWidget()
+        self.verifyTable.setColumnCount(3)
+        self.verifyTable.setHorizontalHeaderLabels(
+            [
+                "Найдено",
+                "Эталон",
+                "Номер",
+            ]
+        )
         self.previewStack = QStackedWidget()
         self.previewStack.addWidget(self.textPreview)
         self.previewStack.addWidget(self.imagePreview)
         self.previewStack.addWidget(self.unsupportedLabel)
+        self.previewStack.addWidget(self.verifyTable)
         self.previewStack.setCurrentWidget(self.unsupportedLabel)
 
         splitter.addWidget(self.previewStack)
@@ -109,12 +120,8 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(splitter, 1)
 
         # enable custom context menu for table
-        self.fileTable.setContextMenuPolicy(
-            Qt.ContextMenuPolicy.CustomContextMenu
-        )
-        self.fileTable.customContextMenuRequested.connect(
-            self._show_file_menu
-        )
+        self.fileTable.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.fileTable.customContextMenuRequested.connect(self._show_file_menu)
 
         # mapping from file path to row index for metadata updates
         self._row_map: dict[str, int] = {}
@@ -122,6 +129,11 @@ class MainWindow(QMainWindow):
         self._error_map: dict[str, str] = {}
         # set of all added file paths to prevent duplicates
         self._all_paths: set[str] = set()
+        # preview text for quick extraction
+        self._preview_map: dict[str, str] = {}
+        # verification results
+        self._verify_results: dict[str, tuple[str, str, str, int]] = {}
+        self._verification_done = False
 
         # Нижняя панель кнопок
         bottom_panel = QHBoxLayout()
@@ -145,7 +157,6 @@ class MainWindow(QMainWindow):
         # Соединяем кнопки с заглушками
         for btn in (
             self.clearBufferButton,
-            self.runVerificationButton,
             self.viewLogsButton,
             self.referenceButton,
             self.downloadPrepButton,
@@ -156,6 +167,8 @@ class MainWindow(QMainWindow):
             self.downloadOpisButton,
         ):
             btn.clicked.connect(self._not_implemented)
+
+        self.runVerificationButton.clicked.connect(self.run_verification)
 
         self.loadArchiveButton.clicked.connect(self.load_archive)
         self.loadFilesButton.clicked.connect(self.load_files)
@@ -203,6 +216,11 @@ class MainWindow(QMainWindow):
         self.meta_worker.error.connect(self._on_meta_error)
         self.meta_worker.start()
 
+        self.quick_worker = QuickPreviewWorker(new_files)
+        self.quick_worker.finished.connect(self._on_quick_preview)
+        self.quick_worker.error.connect(self._on_preview_error)
+        self.quick_worker.start()
+
     def _preview_selected(self) -> None:
         selected = self.fileTable.selectedItems()
         if not selected:
@@ -219,13 +237,26 @@ class MainWindow(QMainWindow):
             self.previewStack.setCurrentWidget(self.unsupportedLabel)
             return
 
-        self.textPreview.setPlainText("Загрузка...")
-        self.previewStack.setCurrentWidget(self.textPreview)
-        self.preview_worker = FilePreviewWorker(path)
-        self.preview_worker.finished.connect(self._on_preview_ready)
-        self.preview_worker.imageReady.connect(self._on_preview_image)
-        self.preview_worker.error.connect(self._on_preview_error)
-        self.preview_worker.start()
+        if self._verification_done and path in self._verify_results:
+            line, ref, number, score = self._verify_results[path]
+            self.verifyTable.setRowCount(1)
+            self.verifyTable.setItem(0, 0, QTableWidgetItem(line or "-"))
+            self.verifyTable.setItem(0, 1, QTableWidgetItem(ref or "-"))
+            self.verifyTable.setItem(0, 2, QTableWidgetItem(number or "-"))
+            if score < FUZZY_THRESHOLD or not ref:
+                for col in range(3):
+                    item = self.verifyTable.item(0, col)
+                    item.setBackground(QColor("#ffc0cb"))
+            self.previewStack.setCurrentWidget(self.verifyTable)
+            return
+
+        text = self._preview_map.get(path)
+        if text is not None:
+            self.textPreview.setPlainText(text)
+            self.previewStack.setCurrentWidget(self.textPreview)
+        else:
+            self.textPreview.setPlainText("Загрузка...")
+            self.previewStack.setCurrentWidget(self.textPreview)
 
     def _not_implemented(self) -> None:
         QMessageBox.information(self, "Info", "Функция не реализована.")
@@ -277,6 +308,11 @@ class MainWindow(QMainWindow):
             self.meta_worker.error.connect(self._on_meta_error)
             self.meta_worker.start()
 
+            self.quick_worker = QuickPreviewWorker(new_files)
+            self.quick_worker.finished.connect(self._on_quick_preview)
+            self.quick_worker.error.connect(self._on_preview_error)
+            self.quick_worker.start()
+
         QMessageBox.information(self, "Успех", "Архив успешно загружен")
 
     def on_archive_error(self, message: str) -> None:
@@ -294,25 +330,6 @@ class MainWindow(QMainWindow):
         if path in self._error_map:
             self._highlight_row(row, self._error_map[path])
 
-    def _on_preview_ready(self, path: str, text: str) -> None:
-        self.textPreview.setPlainText(text)
-        self.previewStack.setCurrentWidget(self.textPreview)
-
-    def _on_preview_image(self, path: str, image_path: str) -> None:
-        pixmap = QPixmap(image_path)
-        self.imagePreview.setPixmap(
-            pixmap.scaled(
-                self.imagePreview.size(),
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-        )
-        QMessageBox.warning(self, "OCR", "Не удалось корректно распознать таблицу")
-        self.previewStack.setCurrentWidget(self.imagePreview)
-        row = self._row_map.get(path)
-        if row is not None:
-            self._highlight_row(row, "Не удалось корректно распознать таблицу")
-
     def _on_preview_error(self, path: str, message: str) -> None:
         self.textPreview.setPlainText(message)
         self.previewStack.setCurrentWidget(self.textPreview)
@@ -320,6 +337,9 @@ class MainWindow(QMainWindow):
         row = self._row_map.get(path)
         if row is not None:
             self._highlight_row(row, message)
+
+    def _on_quick_preview(self, path: str, text: str) -> None:
+        self._preview_map[path] = text
 
     def _on_meta_error(self, path: str, message: str) -> None:
         self._error_map[path] = message
@@ -343,10 +363,35 @@ class MainWindow(QMainWindow):
         self._row_map.clear()
         self._error_map.clear()
         self._all_paths.clear()
+        self._preview_map.clear()
+        self._verify_results.clear()
+        self._verification_done = False
         self.fileTable.clearSelection()
         self.textPreview.clear()
         self.imagePreview.clear()
         self.previewStack.setCurrentWidget(self.unsupportedLabel)
+
+    def run_verification(self) -> None:
+        if not self._preview_map:
+            QMessageBox.information(self, "Info", "Нет данных для сверки")
+            return
+
+        self.verif_worker = VerificationWorker(self._preview_map, FUZZY_THRESHOLD)
+        self.verif_worker.result.connect(self._on_verification_result)
+        self.verif_worker.finished.connect(self._on_verification_finished)
+        self.verif_worker.start()
+
+    def _on_verification_result(
+        self, path: str, line: str, ref: str, number: str, score: int
+    ) -> None:
+        self._verify_results[path] = (line, ref, number, score)
+        row = self._row_map.get(path)
+        if row is not None and score < FUZZY_THRESHOLD:
+            self._highlight_row(row, "Наименование не сопоставлено")
+
+    def _on_verification_finished(self) -> None:
+        self._verification_done = True
+        self._preview_selected()
 
     def _show_file_menu(self, pos) -> None:
         index = self.fileTable.indexAt(pos)

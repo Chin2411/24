@@ -14,9 +14,9 @@ EXTRACTED_FILES_DIR.mkdir(exist_ok=True)
 
 # Настройки безопасности
 ALLOWED_EXTENSIONS: Dict[str, List[str]] = {
-    'archives': ['.zip', '.rar', '.7z'],
-    'documents': ['.pdf', '.docx', '.doc', '.txt', '.rtf'],
-    'images': ['.jpg', '.jpeg', '.png', '.tiff', '.bmp']
+    "archives": [".zip", ".rar", ".7z"],
+    "documents": [".pdf", ".docx", ".doc", ".txt", ".rtf"],
+    "images": [".jpg", ".jpeg", ".png", ".tiff", ".bmp"],
 }
 
 # Собираем все разрешенные расширения в один список
@@ -34,6 +34,11 @@ PDF_IMAGE_DPI = 300  # DPI для конвертации в изображени
 PDF_IMAGE_THRESHOLD = 128  # Порог бинаризации для OCR
 PDF_MAX_WORKERS = 4  # Максимальное количество потоков для обработки
 
+# Настройки быстрого извлечения
+PREVIEW_PAGE_COUNT = 2  # Количество страниц с начала и с конца для предпросмотра
+PREVIEW_PARAGRAPH_COUNT = 2  # Количество абзацев с начала и конца
+FUZZY_THRESHOLD = 70  # Порог схожести для fuzzy matching
+
 # Настройки обработки DOC/DOCX
 DOC_MAX_WORKERS = 4  # Максимальное количество потоков для обработки
 DOC_MIN_TEXT_LENGTH = 50  # Минимальная длина текста для проверки качества извлечения
@@ -46,29 +51,27 @@ LOG_LEVEL = logging.DEBUG  # Используем константу из мод
 
 # Конфигурация логирования
 LOGGING = {
-    'version': 1,
-    'disable_existing_loggers': False,
-    'formatters': {
-        'standard': {
-            'format': LOG_FORMAT
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "standard": {"format": LOG_FORMAT},
+    },
+    "handlers": {
+        "console": {
+            "level": LOG_LEVEL,
+            "class": "logging.StreamHandler",
+            "formatter": "standard",
+        },
+        "file": {
+            "level": LOG_LEVEL,
+            "class": "logging.FileHandler",
+            "filename": str(LOG_FILE),
+            "formatter": "standard",
+            "encoding": "utf-8",
         },
     },
-    'handlers': {
-        'console': {
-            'level': LOG_LEVEL,
-            'class': 'logging.StreamHandler',
-            'formatter': 'standard',
-        },
-        'file': {
-            'level': LOG_LEVEL,
-            'class': 'logging.FileHandler',
-            'filename': str(LOG_FILE),
-            'formatter': 'standard',
-            'encoding': 'utf-8',
-        },
-    },
-    'root': {
-        'handlers': ['console', 'file'],
-        'level': LOG_LEVEL,
+    "root": {
+        "handlers": ["console", "file"],
+        "level": LOG_LEVEL,
     },
 }
