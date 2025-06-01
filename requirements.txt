@@ -1,6 +1,8 @@
 # Основные зависимости
 PyQt6>=6.4.0
 PyPDF2>=3.0.0
+pdfminer.six>=20221105
+PyMuPDF>=1.21.1
 python-docx>=0.8.11
 Pillow>=9.0.0
 pytesseract>=0.3.10
