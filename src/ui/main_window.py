@@ -2,7 +2,6 @@
 
 from pathlib import Path
 import sys
-import logging
 
 # Ensure the project root is in sys.path so that config can be imported even
 # when running this module directly from the ``src/ui`` directory.
@@ -11,7 +10,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.append(str(ROOT_DIR))
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QColor, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
@@ -28,33 +27,14 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
     QFileDialog,
-    QDialog,
-    QPlainTextEdit,
 )
 
-from config import EXTRACTED_FILES_DIR, FUZZY_THRESHOLD, LOG_FILE
+from config import EXTRACTED_FILES_DIR
 from gui.workers import (
     ArchiveExtractWorker,
     FileMetadataWorker,
-    QuickPreviewWorker,
-    VerificationWorker,
+    FilePreviewWorker,
 )
-
-
-class LogDialog(QDialog):
-    """Simple dialog to display log text."""
-
-    def __init__(self, text: str, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Логи")
-        layout = QVBoxLayout(self)
-        self.text_edit = QPlainTextEdit(self)
-        self.text_edit.setReadOnly(True)
-        self.text_edit.setPlainText(text)
-        layout.addWidget(self.text_edit)
-        close_btn = QPushButton("Закрыть", self)
-        close_btn.clicked.connect(self.accept)
-        layout.addWidget(close_btn)
 
 
 class MainWindow(QMainWindow):
@@ -62,7 +42,6 @@ class MainWindow(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.logger = logging.getLogger(__name__)
         self.setWindowTitle("Document Processor")
         self.resize(1024, 768)
 
@@ -117,20 +96,10 @@ class MainWindow(QMainWindow):
         self.unsupportedLabel = QLabel(
             "Просмотр не поддерживается", alignment=Qt.AlignmentFlag.AlignCenter
         )
-        self.verifyTable = QTableWidget()
-        self.verifyTable.setColumnCount(3)
-        self.verifyTable.setHorizontalHeaderLabels(
-            [
-                "Найдено",
-                "Эталон",
-                "Номер",
-            ]
-        )
         self.previewStack = QStackedWidget()
         self.previewStack.addWidget(self.textPreview)
         self.previewStack.addWidget(self.imagePreview)
         self.previewStack.addWidget(self.unsupportedLabel)
-        self.previewStack.addWidget(self.verifyTable)
         self.previewStack.setCurrentWidget(self.unsupportedLabel)
 
         splitter.addWidget(self.previewStack)
@@ -140,8 +109,12 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(splitter, 1)
 
         # enable custom context menu for table
-        self.fileTable.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.fileTable.customContextMenuRequested.connect(self._show_file_menu)
+        self.fileTable.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu
+        )
+        self.fileTable.customContextMenuRequested.connect(
+            self._show_file_menu
+        )
 
         # mapping from file path to row index for metadata updates
         self._row_map: dict[str, int] = {}
@@ -149,11 +122,6 @@ class MainWindow(QMainWindow):
         self._error_map: dict[str, str] = {}
         # set of all added file paths to prevent duplicates
         self._all_paths: set[str] = set()
-        # preview text for quick extraction
-        self._preview_map: dict[str, str] = {}
-        # verification results
-        self._verify_results: dict[str, tuple[str, str, str, int]] = {}
-        self._verification_done = False
 
         # Нижняя панель кнопок
         bottom_panel = QHBoxLayout()
@@ -177,6 +145,7 @@ class MainWindow(QMainWindow):
         # Соединяем кнопки с заглушками
         for btn in (
             self.clearBufferButton,
+            self.runVerificationButton,
             self.viewLogsButton,
             self.referenceButton,
             self.downloadPrepButton,
@@ -187,9 +156,6 @@ class MainWindow(QMainWindow):
             self.downloadOpisButton,
         ):
             btn.clicked.connect(self._not_implemented)
-
-        self.runVerificationButton.clicked.connect(self.run_verification)
-        self.viewLogsButton.clicked.connect(self.show_logs)
 
         self.loadArchiveButton.clicked.connect(self.load_archive)
         self.loadFilesButton.clicked.connect(self.load_files)
@@ -207,8 +173,6 @@ class MainWindow(QMainWindow):
         )
         if not files:
             return
-
-        self.logger.info("Выбраны файлы: %s", files)
 
         new_files: list[str] = []
         for f in files:
@@ -230,7 +194,6 @@ class MainWindow(QMainWindow):
             self._row_map[abs_path] = row
             self._all_paths.add(abs_path)
             new_files.append(abs_path)
-            self.logger.info("Файл добавлен: %s", abs_path)
 
         if not new_files:
             return
@@ -239,13 +202,6 @@ class MainWindow(QMainWindow):
         self.meta_worker.result.connect(self._update_metadata_row)
         self.meta_worker.error.connect(self._on_meta_error)
         self.meta_worker.start()
-        self.logger.info("Извлечение метаданных запущено")
-
-        self.quick_worker = QuickPreviewWorker(new_files)
-        self.quick_worker.finished.connect(self._on_quick_preview)
-        self.quick_worker.error.connect(self._on_preview_error)
-        self.quick_worker.start()
-        self.logger.info("Быстрый просмотр запущен")
 
     def _preview_selected(self) -> None:
         selected = self.fileTable.selectedItems()
@@ -263,40 +219,15 @@ class MainWindow(QMainWindow):
             self.previewStack.setCurrentWidget(self.unsupportedLabel)
             return
 
-        if self._verification_done:
-            if path in self._verify_results:
-                line, ref, number, score = self._verify_results[path]
-                self.verifyTable.setRowCount(1)
-                self.verifyTable.setItem(0, 0, QTableWidgetItem(line or "-"))
-                self.verifyTable.setItem(0, 1, QTableWidgetItem(ref or "-"))
-                self.verifyTable.setItem(0, 2, QTableWidgetItem(number or "-"))
-                if score < FUZZY_THRESHOLD or not ref:
-                    for col in range(3):
-                        item = self.verifyTable.item(0, col)
-                        item.setBackground(QColor("#ffc0cb"))
-                    self.verifyTable.setToolTip("Нет совпадения в справочнике")
-                else:
-                    self.verifyTable.setToolTip("")
-                self.previewStack.setCurrentWidget(self.verifyTable)
-                return
-            elif path in self._error_map:
-                self.textPreview.setPlainText(self._error_map[path])
-                self.previewStack.setCurrentWidget(self.textPreview)
-                return
-
-        text = self._preview_map.get(path)
-        if text is not None:
-            self.textPreview.setPlainText(text)
-            self.previewStack.setCurrentWidget(self.textPreview)
-        elif path in self._error_map:
-            self.textPreview.setPlainText(self._error_map[path])
-            self.previewStack.setCurrentWidget(self.textPreview)
-        else:
-            self.textPreview.setPlainText("Загрузка...")
-            self.previewStack.setCurrentWidget(self.textPreview)
+        self.textPreview.setPlainText("Загрузка...")
+        self.previewStack.setCurrentWidget(self.textPreview)
+        self.preview_worker = FilePreviewWorker(path)
+        self.preview_worker.finished.connect(self._on_preview_ready)
+        self.preview_worker.imageReady.connect(self._on_preview_image)
+        self.preview_worker.error.connect(self._on_preview_error)
+        self.preview_worker.start()
 
     def _not_implemented(self) -> None:
-        self.logger.info("Нажата кнопка с не реализованной функцией")
         QMessageBox.information(self, "Info", "Функция не реализована.")
 
     def load_archive(self) -> None:
@@ -318,7 +249,6 @@ class MainWindow(QMainWindow):
         self.archive_worker.finished.connect(self.on_archive_extracted)
         self.archive_worker.error.connect(self.on_archive_error)
         self.archive_worker.start()
-        self.logger.info("Запущено извлечение архива %s", file_path)
 
     def on_archive_extracted(self, files: list[str]) -> None:
         new_files: list[str] = []
@@ -346,20 +276,11 @@ class MainWindow(QMainWindow):
             self.meta_worker.result.connect(self._update_metadata_row)
             self.meta_worker.error.connect(self._on_meta_error)
             self.meta_worker.start()
-            self.logger.info("Извлечение метаданных запущено")
-
-            self.quick_worker = QuickPreviewWorker(new_files)
-            self.quick_worker.finished.connect(self._on_quick_preview)
-            self.quick_worker.error.connect(self._on_preview_error)
-            self.quick_worker.start()
-            self.logger.info("Быстрый просмотр запущен")
 
         QMessageBox.information(self, "Успех", "Архив успешно загружен")
-        self.logger.info("Архив загружен: %s", files)
 
     def on_archive_error(self, message: str) -> None:
         QMessageBox.critical(self, "Ошибка", message)
-        self.logger.error("Ошибка извлечения архива: %s", message)
 
     def _update_metadata_row(
         self, path: str, language: str, paper: str, count: str
@@ -373,6 +294,22 @@ class MainWindow(QMainWindow):
         if path in self._error_map:
             self._highlight_row(row, self._error_map[path])
 
+    def _on_preview_ready(self, path: str, text: str) -> None:
+        self.textPreview.setPlainText(text)
+        self.previewStack.setCurrentWidget(self.textPreview)
+
+    def _on_preview_image(self, path: str, image_path: str) -> None:
+        pixmap = QPixmap(image_path)
+        self.imagePreview.setPixmap(
+            pixmap.scaled(
+                self.imagePreview.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        )
+        QMessageBox.warning(self, "OCR", "Не удалось корректно распознать таблицу")
+        self.previewStack.setCurrentWidget(self.imagePreview)
+
     def _on_preview_error(self, path: str, message: str) -> None:
         self.textPreview.setPlainText(message)
         self.previewStack.setCurrentWidget(self.textPreview)
@@ -380,18 +317,12 @@ class MainWindow(QMainWindow):
         row = self._row_map.get(path)
         if row is not None:
             self._highlight_row(row, message)
-        self.logger.error("Ошибка превью для %s: %s", path, message)
-
-    def _on_quick_preview(self, path: str, text: str) -> None:
-        self._preview_map[path] = text
-        self.logger.info("Предпросмотр получен для %s", path)
 
     def _on_meta_error(self, path: str, message: str) -> None:
         self._error_map[path] = message
         row = self._row_map.get(path)
         if row is not None:
             self._highlight_row(row, message)
-        self.logger.error("Ошибка метаданных для %s: %s", path, message)
 
     def _highlight_row(self, row: int, message: str) -> None:
         for col in range(self.fileTable.columnCount()):
@@ -405,58 +336,14 @@ class MainWindow(QMainWindow):
 
     def clear_buffer(self) -> None:
         """Remove all files from the table and internal lists."""
-        self.logger.info("Очистка буфера")
         self.fileTable.setRowCount(0)
         self._row_map.clear()
         self._error_map.clear()
         self._all_paths.clear()
-        self._preview_map.clear()
-        self._verify_results.clear()
-        self._verification_done = False
         self.fileTable.clearSelection()
         self.textPreview.clear()
         self.imagePreview.clear()
         self.previewStack.setCurrentWidget(self.unsupportedLabel)
-
-    def run_verification(self) -> None:
-        if not self._preview_map:
-            QMessageBox.information(self, "Info", "Нет данных для сверки")
-            return
-
-        self.verif_worker = VerificationWorker(self._preview_map, FUZZY_THRESHOLD)
-        self.verif_worker.result.connect(self._on_verification_result)
-        self.verif_worker.error.connect(self._on_verification_error)
-        self.verif_worker.finished.connect(self._on_verification_finished)
-        self.verif_worker.start()
-        self.logger.info("Запущена сверка файлов")
-
-    def _on_verification_result(
-        self, path: str, line: str, ref: str, number: str, score: int
-    ) -> None:
-        self._verify_results[path] = (line, ref, number, score)
-        row = self._row_map.get(path)
-        if row is not None and score < FUZZY_THRESHOLD:
-            self._highlight_row(row, "Наименование не сопоставлено")
-        self.logger.info(
-            "Результат сверки %s: line=%s ref=%s score=%s number=%s",
-            path,
-            line,
-            ref,
-            score,
-            number,
-        )
-
-    def _on_verification_error(self, path: str, message: str) -> None:
-        self._error_map[path] = message
-        row = self._row_map.get(path)
-        if row is not None:
-            self._highlight_row(row, message)
-        self.logger.error("Ошибка сверки для %s: %s", path, message)
-
-    def _on_verification_finished(self) -> None:
-        self._verification_done = True
-        self._preview_selected()
-        self.logger.info("Сверка завершена")
 
     def _show_file_menu(self, pos) -> None:
         index = self.fileTable.indexAt(pos)
@@ -480,7 +367,6 @@ class MainWindow(QMainWindow):
         self._row_map.pop(path, None)
         self._error_map.pop(path, None)
         self._all_paths.discard(path)
-        self.logger.info("Файл удалён: %s", path)
 
         # adjust row indices after removed row
         for p, r in list(self._row_map.items()):
@@ -490,20 +376,3 @@ class MainWindow(QMainWindow):
         self.textPreview.clear()
         self.imagePreview.clear()
         self.previewStack.setCurrentWidget(self.unsupportedLabel)
-
-    def show_logs(self) -> None:
-        """Display log contents in a dialog."""
-        self.logger.info("Просмотр логов")
-        try:
-            if LOG_FILE.exists() and LOG_FILE.stat().st_size > 0:
-                lines = LOG_FILE.read_text(encoding="utf-8").splitlines()
-                tail = "\n".join(lines[-200:])
-            elif not LOG_FILE.exists():
-                tail = "Лог-файл отсутствует"
-            else:
-                tail = "В логах нет новых сообщений"
-        except Exception as exc:  # pragma: no cover - unexpected errors
-            tail = f"Не удалось загрузить логи: {exc}"
-
-        dlg = LogDialog(tail, self)
-        dlg.exec()

@@ -4,19 +4,10 @@ import tarfile
 import zipfile
 from pathlib import Path
 from typing import List
-import logging
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from rapidfuzz import process, fuzz
-
-from constants import REFERENCE_NAMES
-from utils import unpack3
 
 import rarfile
 import py7zr
 from PyQt6.QtCore import QThread, pyqtSignal
-
-logger = logging.getLogger(__name__)
 
 
 def extract_archive(archive_path: str, dest_dir: Path) -> List[str]:
@@ -24,46 +15,40 @@ def extract_archive(archive_path: str, dest_dir: Path) -> List[str]:
 
     Returns list of extracted file paths.
     """
-    logger.info("Начало извлечения архива %s", archive_path)
     dest_dir.mkdir(parents=True, exist_ok=True)
     archive_lower = archive_path.lower()
     extracted: List[str] = []
 
-    if archive_lower.endswith(".zip"):
-        with zipfile.ZipFile(archive_path, "r") as zf:
+    if archive_lower.endswith('.zip'):
+        with zipfile.ZipFile(archive_path, 'r') as zf:
             for member in zf.infolist():
                 if member.is_dir():
                     continue
                 zf.extract(member, dest_dir)
                 extracted.append(str(dest_dir / member.filename))
-                logger.info("Извлечён файл %s", member.filename)
-    elif archive_lower.endswith(".rar"):
+    elif archive_lower.endswith('.rar'):
         with rarfile.RarFile(archive_path) as rf:
             for member in rf.infolist():
                 if member.isdir():
                     continue
                 rf.extract(member, dest_dir)
                 extracted.append(str(dest_dir / member.filename))
-                logger.info("Извлечён файл %s", member.filename)
-    elif archive_lower.endswith(".7z"):
-        with py7zr.SevenZipFile(archive_path, mode="r") as sz:
+    elif archive_lower.endswith('.7z'):
+        with py7zr.SevenZipFile(archive_path, mode='r') as sz:
             sz.extractall(path=dest_dir)
             for name in sz.getnames():
-                if not name.endswith("/"):
+                if not name.endswith('/'):
                     extracted.append(str(dest_dir / name))
-                    logger.info("Извлечён файл %s", name)
-    elif archive_lower.endswith((".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz2")):
-        with tarfile.open(archive_path, "r:*") as tf:
+    elif archive_lower.endswith(('.tar', '.tar.gz', '.tgz', '.tar.bz2', '.tbz2')):
+        with tarfile.open(archive_path, 'r:*') as tf:
             for member in tf.getmembers():
                 if member.isdir():
                     continue
                 tf.extract(member, dest_dir)
                 extracted.append(str(dest_dir / member.name))
-                logger.info("Извлечён файл %s", member.name)
     else:
-        raise ValueError("Неподдерживаемый формат архива")
+        raise ValueError('Неподдерживаемый формат архива')
 
-    logger.info("Завершено извлечение архива %s", archive_path)
     return extracted
 
 
@@ -101,36 +86,11 @@ class FileMetadataWorker(QThread):
         self.files = files
 
     def run(self) -> None:
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            future_map = {
-                executor.submit(extract_metadata, Path(p)): p for p in self.files
-            }
-            start_times: dict[str, float] = {
-                fut: time.perf_counter() for fut in future_map
-            }
-            for fut in as_completed(future_map):
-                path = future_map[fut]
-                duration = time.perf_counter() - start_times[fut]
-                try:
-                    result = fut.result()
-                    count, language, paper = unpack3(result)
-                    if duration > 5:
-                        logger.warning(
-                            "Metadata extraction for %s took %.2f sec", path, duration
-                        )
-                    logger.info(
-                        "Метаданные для %s: язык=%s, формат=%s, кол-во=%s",
-                        path,
-                        language,
-                        paper,
-                        count,
-                    )
-                    if count.startswith("Ошибка") or count == "Неподдерживаемый формат":
-                        self.error.emit(path, count)
-                    self.result.emit(path, language, paper, count)
-                except Exception as exc:
-                    logger.exception("Metadata error for %s", path)
-                    self.error.emit(path, str(exc))
+        for path in self.files:
+            count, language, paper = extract_metadata(Path(path))
+            if count.startswith("Ошибка") or count == "Неподдерживаемый формат":
+                self.error.emit(path, count)
+            self.result.emit(path, language, paper, count)
 
 
 class FilePreviewWorker(QThread):
@@ -145,118 +105,13 @@ class FilePreviewWorker(QThread):
         self.path = path
 
     def run(self) -> None:
-        start = time.perf_counter()
         try:
-            result = extract_preview(Path(self.path))
-            text, image, err = unpack3(result)
-            duration = time.perf_counter() - start
-            if duration > 5:
-                logger.warning(
-                    "Preview extraction for %s took %.2f sec", self.path, duration
-                )
-            logger.info(
-                "Предпросмотр для %s: %s", self.path, text[:50].replace("\n", " ")
-            )
+            text, image = extract_preview(Path(self.path))
             if image:
                 self.imageReady.emit(self.path, image)
             if text:
                 self.finished.emit(self.path, text)
-            if err:
-                self.error.emit(self.path, err)
-            elif not text and not image:
+            elif not image:
                 self.error.emit(self.path, "Не удалось создать превью")
         except Exception as exc:
-            logger.exception("Preview error for %s", self.path)
             self.error.emit(self.path, str(exc))
-
-
-class QuickPreviewWorker(QThread):
-    """Extract preview text for a batch of files."""
-
-    finished = pyqtSignal(str, str)  # path, text
-    error = pyqtSignal(str, str)
-
-    def __init__(self, files: list[str]):
-        super().__init__()
-        self.files = files
-
-    def run(self) -> None:
-        with ThreadPoolExecutor(max_workers=4) as ex:
-            future_map = {
-                ex.submit(extract_preview_text, Path(p)): p for p in self.files
-            }
-            for fut in as_completed(future_map):
-                path = future_map[fut]
-                try:
-                    text = fut.result()
-                    logger.info("Быстрый просмотр %s: %s", path, text[:50].replace("\n", " "))
-                    self.finished.emit(path, text)
-                except Exception as exc:
-                    logger.exception("Quick preview error for %s", path)
-                    self.error.emit(path, str(exc))
-
-
-class VerificationWorker(QThread):
-    """Run fuzzy verification against reference names."""
-
-    result = pyqtSignal(str, str, str, str, int)  # path, line, ref, number, score
-    error = pyqtSignal(str, str)  # path, error
-    finished = pyqtSignal()
-
-    def __init__(self, data: dict[str, str], threshold: int):
-        super().__init__()
-        self.data = data
-        self.threshold = threshold
-
-    def run(self) -> None:
-        import re
-
-        try:
-            references = [r["ru"] for r in REFERENCE_NAMES if r.get("ru")]
-        except Exception as exc:  # pragma: no cover - unexpected errors
-            logger.exception("Failed to load reference names")
-            for p in self.data:
-                self.error.emit(p, "Справочник не загружен")
-            self.finished.emit()
-            return
-
-        if not references:
-            logger.error("REFERENCE_NAMES list is empty")
-            for p in self.data:
-                self.error.emit(p, "Справочник пуст")
-            self.finished.emit()
-            return
-
-        for path, text in self.data.items():
-            try:
-                best_line = ""
-                best_ref = ""
-                best_score = 0
-                for line in text.splitlines():
-                    line = line.strip()
-                    if not line:
-                        continue
-                    choice = process.extractOne(
-                        line, references, scorer=fuzz.token_set_ratio
-                    )
-                    if choice:
-                        ref, score = choice
-                        if score > best_score:
-                            best_score = score
-                            best_line = line
-                            best_ref = ref
-                num_match = re.search(r"№\s*\S+", text)
-                number = num_match.group(0) if num_match else ""
-                logger.info(
-                    "Сверка %s: line='%s' ref='%s' score=%s number=%s",
-                    path,
-                    best_line,
-                    best_ref,
-                    best_score,
-                    number,
-                )
-                self.result.emit(path, best_line, best_ref, number, best_score)
-            except Exception as exc:  # pragma: no cover - unexpected errors
-                logger.exception("Verification error for %s", path)
-                self.error.emit(path, "Ошибка сверки")
-        self.finished.emit()
