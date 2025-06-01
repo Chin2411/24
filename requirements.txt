@@ -21,6 +21,7 @@ fuzzywuzzy>=0.18.0
 python-Levenshtein>=0.21.0
 pandas>=1.5.0
 reportlab>=3.6.0
+opencv-python>=4.5.0
 
 # Зависимости для разработки
 pytest>=7.0.0
