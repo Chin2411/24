@@ -28,7 +28,11 @@ from PyQt6.QtWidgets import (
 )
 
 from config import EXTRACTED_FILES_DIR
-from gui.workers import ArchiveExtractWorker, FileMetadataWorker
+from gui.workers import (
+    ArchiveExtractWorker,
+    FileMetadataWorker,
+    FilePreviewWorker,
+)
 
 
 
@@ -147,8 +151,27 @@ class MainWindow(QMainWindow):
 
 
     def _preview_selected(self) -> None:
-        """Обработчик выбора файла в таблице (заглушка)."""
-        self.previewStack.setCurrentWidget(self.unsupportedLabel)
+        selected = self.fileTable.selectedItems()
+        if not selected:
+            self.previewStack.setCurrentWidget(self.unsupportedLabel)
+            return
+        # first column item contains path in UserRole
+        row = self.fileTable.currentRow()
+        item = self.fileTable.item(row, 0)
+        if item is None:
+            self.previewStack.setCurrentWidget(self.unsupportedLabel)
+            return
+        path = item.data(Qt.ItemDataRole.UserRole)
+        if not path:
+            self.previewStack.setCurrentWidget(self.unsupportedLabel)
+            return
+
+        self.textPreview.setPlainText("Загрузка...")
+        self.previewStack.setCurrentWidget(self.textPreview)
+        self.preview_worker = FilePreviewWorker(path)
+        self.preview_worker.finished.connect(self._on_preview_ready)
+        self.preview_worker.error.connect(self._on_preview_error)
+        self.preview_worker.start()
 
     def _not_implemented(self) -> None:
         QMessageBox.information(self, "Info", "Функция не реализована.")
@@ -179,7 +202,9 @@ class MainWindow(QMainWindow):
             row = self.fileTable.rowCount()
             self.fileTable.insertRow(row)
             path = Path(file_path)
-            self.fileTable.setItem(row, 0, QTableWidgetItem(path.name))
+            name_item = QTableWidgetItem(path.name)
+            name_item.setData(Qt.ItemDataRole.UserRole, str(path))
+            self.fileTable.setItem(row, 0, name_item)
             self.fileTable.setItem(row, 1, QTableWidgetItem(path.suffix.lstrip(".")))
             self.fileTable.setItem(row, 2, QTableWidgetItem("-"))
             self.fileTable.setItem(row, 3, QTableWidgetItem("-"))
@@ -203,3 +228,11 @@ class MainWindow(QMainWindow):
         self.fileTable.setItem(row, 2, QTableWidgetItem(language))
         self.fileTable.setItem(row, 3, QTableWidgetItem(paper))
         self.fileTable.setItem(row, 4, QTableWidgetItem(count))
+
+    def _on_preview_ready(self, path: str, text: str) -> None:
+        self.textPreview.setPlainText(text)
+        self.previewStack.setCurrentWidget(self.textPreview)
+
+    def _on_preview_error(self, path: str, message: str) -> None:
+        self.textPreview.setPlainText(message)
+        self.previewStack.setCurrentWidget(self.textPreview)
