@@ -7,7 +7,7 @@ from typing import List
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from fuzzywuzzy import process
+from rapidfuzz import process, fuzz
 
 from constants import REFERENCE_NAMES
 
@@ -183,7 +183,6 @@ class VerificationWorker(QThread):
         self.threshold = threshold
 
     def run(self) -> None:
-        from fuzzywuzzy import fuzz
         import re
 
         references = [r["ru"] for r in REFERENCE_NAMES]
