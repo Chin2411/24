@@ -200,10 +200,10 @@ def _extract_tables(path: Path, pages: str) -> tuple[str, str | None, str | None
     """Extract tables from PDF pages using pdfplumber and OCR fallbacks."""
     tables_text = ""
     last_error = ""
+    row_errors: list[str] = []
     image_path: str | None = None
     try:
         import pdfplumber
-        import pandas as pd
 
         with pdfplumber.open(str(path)) as pdf:
             page_nums = [int(p) - 1 for p in pages.split(",") if p]
@@ -213,8 +213,27 @@ def _extract_tables(path: Path, pages: str) -> tuple[str, str | None, str | None
                 page = pdf.pages[p]
                 extracted = False
                 for tbl in page.extract_tables() or []:
-                    df = pd.DataFrame(tbl[1:], columns=tbl[0])
-                    tables_text += df.to_csv(index=False) + "\n"
+                    header = tbl[0] if tbl else []
+                    n_cols = len(header)
+                    lines: list[str] = []
+
+                    def _fix_row(r: list[str], row_idx: int) -> list[str]:
+                        try:
+                            cells = list(r) if r else []
+                            if len(cells) < n_cols:
+                                cells.extend([""] * (n_cols - len(cells)))
+                            return [str(c) if c is not None else "" for c in cells[:n_cols]]
+                        except Exception as exc:
+                            err = f"Page {p + 1}, row {row_idx}: {exc}"
+                            logger.error(err)
+                            row_errors.append(err)
+                            return ["" for _ in range(n_cols)]
+
+                    lines.append(",".join(_fix_row(header, 0)))
+                    for idx, row in enumerate(tbl[1:], start=1):
+                        lines.append(",".join(_fix_row(row, idx)))
+
+                    tables_text += "\n".join(lines) + "\n"
                     extracted = True
                 if not extracted:
                     logger.info("No table found on page %s, trying OCR", p + 1)
@@ -232,7 +251,8 @@ def _extract_tables(path: Path, pages: str) -> tuple[str, str | None, str | None
                     last_error = f"Page {p + 1}: не удалось корректно распознать таблицу"
                     logger.error(last_error)
         if tables_text:
-            return tables_text.strip(), None, None
+            error_msg = "; ".join(row_errors) if row_errors else None
+            return tables_text.strip(), None, error_msg
     except Exception as exc:  # pragma: no cover - optional dependency
         last_error = f"Ошибка pdfplumber: {exc}"
         logger.error(last_error)
@@ -290,7 +310,7 @@ def _pdf_preview(path: Path) -> tuple[str, str | None, str | None]:
     table_text, image, table_err = _extract_tables(path, pages)
     if table_text:
         _save_cached_preview(path, table_text)
-        return table_text, None, None
+        return table_text, None, table_err
     if table_err and image:
         return "", image, table_err
 
