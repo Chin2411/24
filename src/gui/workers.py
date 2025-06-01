@@ -4,6 +4,9 @@ import tarfile
 import zipfile
 from pathlib import Path
 from typing import List
+import logging
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import rarfile
 import py7zr
@@ -86,11 +89,27 @@ class FileMetadataWorker(QThread):
         self.files = files
 
     def run(self) -> None:
-        for path in self.files:
-            count, language, paper = extract_metadata(Path(path))
-            if count.startswith("Ошибка") or count == "Неподдерживаемый формат":
-                self.error.emit(path, count)
-            self.result.emit(path, language, paper, count)
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            future_map = {
+                executor.submit(extract_metadata, Path(p)): p for p in self.files
+            }
+            start_times: dict[str, float] = {
+                fut: time.perf_counter() for fut in future_map
+            }
+            for fut in as_completed(future_map):
+                path = future_map[fut]
+                duration = time.perf_counter() - start_times[fut]
+                try:
+                    count, language, paper = fut.result()
+                    if duration > 5:
+                        logging.getLogger(__name__).warning(
+                            "Metadata extraction for %s took %.2f sec", path, duration
+                        )
+                    if count.startswith("Ошибка") or count == "Неподдерживаемый формат":
+                        self.error.emit(path, count)
+                    self.result.emit(path, language, paper, count)
+                except Exception as exc:
+                    self.error.emit(path, str(exc))
 
 
 class FilePreviewWorker(QThread):
@@ -105,8 +124,14 @@ class FilePreviewWorker(QThread):
         self.path = path
 
     def run(self) -> None:
+        start = time.perf_counter()
         try:
             text, image = extract_preview(Path(self.path))
+            duration = time.perf_counter() - start
+            if duration > 5:
+                logging.getLogger(__name__).warning(
+                    "Preview extraction for %s took %.2f sec", self.path, duration
+                )
             if image:
                 self.imageReady.emit(self.path, image)
             if text:
