@@ -4,6 +4,7 @@ from pathlib import Path
 import shutil
 import logging
 from src.common.paths import LOG_PATH
+from utils.logging_utils import logger_flush
 
 from PyQt6.QtWidgets import (
     QDialog,
@@ -58,18 +59,14 @@ class LogViewerDialog(QDialog):
             color = "orange"
         self.text.append(f'<span style="color:{color}">{line}</span>')
 
-    def load_logs(self) -> None:
-        """Load last N lines from log file."""
-        for handler in logging.getLogger().handlers:
-            try:
-                handler.flush()
-            except Exception:
-                pass
+    def _load_log(self) -> None:
+        """Internal helper to read log file and display its tail."""
+        logger_flush()
         try:
             lines = self.log_file.read_text(encoding="utf-8").splitlines()
         except FileNotFoundError:
             self.text.setPlainText(
-                "Лог-файл ещё не создан — выполните действие и нажмите «Обновить»."
+                "Лог-файл ещё не создан — выполните действие в программе и нажмите «Обновить»."
             )
             return
         except Exception as exc:  # pragma: no cover - runtime errors
@@ -83,13 +80,13 @@ class LogViewerDialog(QDialog):
             self._append_colored(line)
         self.text.moveCursor(QTextCursor.MoveOperation.End)
 
+    def load_logs(self) -> None:
+        """Public slot to refresh log contents."""
+        self._load_log()
+
     def save_logs(self) -> None:
         """Save current log file to user selected location."""
-        for handler in logging.getLogger().handlers:
-            try:
-                handler.flush()
-            except Exception:
-                pass
+        logger_flush()
         dest_path, _ = QFileDialog.getSaveFileName(
             self,
             "Сохранить лог",
