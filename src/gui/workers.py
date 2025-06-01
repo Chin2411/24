@@ -175,6 +175,7 @@ class VerificationWorker(QThread):
     """Run fuzzy verification against reference names."""
 
     result = pyqtSignal(str, str, str, str, int)  # path, line, ref, number, score
+    error = pyqtSignal(str, str)  # path, error
     finished = pyqtSignal()
 
     def __init__(self, data: dict[str, str], threshold: int):
@@ -184,24 +185,46 @@ class VerificationWorker(QThread):
 
     def run(self) -> None:
         import re
+        logger = logging.getLogger(__name__)
 
-        references = [r["ru"] for r in REFERENCE_NAMES]
+        try:
+            references = [r["ru"] for r in REFERENCE_NAMES if r.get("ru")]
+        except Exception as exc:  # pragma: no cover - unexpected errors
+            logger.error("Failed to load reference names: %s", exc)
+            for p in self.data:
+                self.error.emit(p, "Справочник не загружен")
+            self.finished.emit()
+            return
+
+        if not references:
+            logger.error("REFERENCE_NAMES list is empty")
+            for p in self.data:
+                self.error.emit(p, "Справочник пуст")
+            self.finished.emit()
+            return
+
         for path, text in self.data.items():
-            best_line = ""
-            best_ref = ""
-            best_score = 0
-            for line in text.splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                ref, score = process.extractOne(
-                    line, references, scorer=fuzz.token_set_ratio
-                )
-                if score > best_score:
-                    best_score = score
-                    best_line = line
-                    best_ref = ref
-            num_match = re.search(r"№\s*\S+", text)
-            number = num_match.group(0) if num_match else ""
-            self.result.emit(path, best_line, best_ref, number, best_score)
+            try:
+                best_line = ""
+                best_ref = ""
+                best_score = 0
+                for line in text.splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    choice = process.extractOne(
+                        line, references, scorer=fuzz.token_set_ratio
+                    )
+                    if choice:
+                        ref, score = choice
+                        if score > best_score:
+                            best_score = score
+                            best_line = line
+                            best_ref = ref
+                num_match = re.search(r"№\s*\S+", text)
+                number = num_match.group(0) if num_match else ""
+                self.result.emit(path, best_line, best_ref, number, best_score)
+            except Exception as exc:  # pragma: no cover - unexpected errors
+                logger.error("Verification error for %s: %s", path, exc)
+                self.error.emit(path, "Ошибка сверки")
         self.finished.emit()

@@ -237,22 +237,33 @@ class MainWindow(QMainWindow):
             self.previewStack.setCurrentWidget(self.unsupportedLabel)
             return
 
-        if self._verification_done and path in self._verify_results:
-            line, ref, number, score = self._verify_results[path]
-            self.verifyTable.setRowCount(1)
-            self.verifyTable.setItem(0, 0, QTableWidgetItem(line or "-"))
-            self.verifyTable.setItem(0, 1, QTableWidgetItem(ref or "-"))
-            self.verifyTable.setItem(0, 2, QTableWidgetItem(number or "-"))
-            if score < FUZZY_THRESHOLD or not ref:
-                for col in range(3):
-                    item = self.verifyTable.item(0, col)
-                    item.setBackground(QColor("#ffc0cb"))
-            self.previewStack.setCurrentWidget(self.verifyTable)
-            return
+        if self._verification_done:
+            if path in self._verify_results:
+                line, ref, number, score = self._verify_results[path]
+                self.verifyTable.setRowCount(1)
+                self.verifyTable.setItem(0, 0, QTableWidgetItem(line or "-"))
+                self.verifyTable.setItem(0, 1, QTableWidgetItem(ref or "-"))
+                self.verifyTable.setItem(0, 2, QTableWidgetItem(number or "-"))
+                if score < FUZZY_THRESHOLD or not ref:
+                    for col in range(3):
+                        item = self.verifyTable.item(0, col)
+                        item.setBackground(QColor("#ffc0cb"))
+                    self.verifyTable.setToolTip("Нет совпадения в справочнике")
+                else:
+                    self.verifyTable.setToolTip("")
+                self.previewStack.setCurrentWidget(self.verifyTable)
+                return
+            elif path in self._error_map:
+                self.textPreview.setPlainText(self._error_map[path])
+                self.previewStack.setCurrentWidget(self.textPreview)
+                return
 
         text = self._preview_map.get(path)
         if text is not None:
             self.textPreview.setPlainText(text)
+            self.previewStack.setCurrentWidget(self.textPreview)
+        elif path in self._error_map:
+            self.textPreview.setPlainText(self._error_map[path])
             self.previewStack.setCurrentWidget(self.textPreview)
         else:
             self.textPreview.setPlainText("Загрузка...")
@@ -378,6 +389,7 @@ class MainWindow(QMainWindow):
 
         self.verif_worker = VerificationWorker(self._preview_map, FUZZY_THRESHOLD)
         self.verif_worker.result.connect(self._on_verification_result)
+        self.verif_worker.error.connect(self._on_verification_error)
         self.verif_worker.finished.connect(self._on_verification_finished)
         self.verif_worker.start()
 
@@ -388,6 +400,12 @@ class MainWindow(QMainWindow):
         row = self._row_map.get(path)
         if row is not None and score < FUZZY_THRESHOLD:
             self._highlight_row(row, "Наименование не сопоставлено")
+
+    def _on_verification_error(self, path: str, message: str) -> None:
+        self._error_map[path] = message
+        row = self._row_map.get(path)
+        if row is not None:
+            self._highlight_row(row, message)
 
     def _on_verification_finished(self) -> None:
         self._verification_done = True
