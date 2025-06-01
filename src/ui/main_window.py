@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import sys
+import logging
 
 # Ensure the project root is in sys.path so that config can be imported even
 # when running this module directly from the ``src/ui`` directory.
@@ -29,7 +30,7 @@ from PyQt6.QtWidgets import (
     QFileDialog,
 )
 
-from config import EXTRACTED_FILES_DIR, FUZZY_THRESHOLD
+from config import EXTRACTED_FILES_DIR, FUZZY_THRESHOLD, LOG_FILE
 from gui.workers import (
     ArchiveExtractWorker,
     FileMetadataWorker,
@@ -43,6 +44,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
+        self.logger = logging.getLogger(__name__)
         self.setWindowTitle("Document Processor")
         self.resize(1024, 768)
 
@@ -169,6 +171,7 @@ class MainWindow(QMainWindow):
             btn.clicked.connect(self._not_implemented)
 
         self.runVerificationButton.clicked.connect(self.run_verification)
+        self.viewLogsButton.clicked.connect(self.show_logs)
 
         self.loadArchiveButton.clicked.connect(self.load_archive)
         self.loadFilesButton.clicked.connect(self.load_files)
@@ -186,6 +189,8 @@ class MainWindow(QMainWindow):
         )
         if not files:
             return
+
+        self.logger.info("Выбраны файлы: %s", files)
 
         new_files: list[str] = []
         for f in files:
@@ -207,6 +212,7 @@ class MainWindow(QMainWindow):
             self._row_map[abs_path] = row
             self._all_paths.add(abs_path)
             new_files.append(abs_path)
+            self.logger.info("Файл добавлен: %s", abs_path)
 
         if not new_files:
             return
@@ -215,11 +221,13 @@ class MainWindow(QMainWindow):
         self.meta_worker.result.connect(self._update_metadata_row)
         self.meta_worker.error.connect(self._on_meta_error)
         self.meta_worker.start()
+        self.logger.info("Извлечение метаданных запущено")
 
         self.quick_worker = QuickPreviewWorker(new_files)
         self.quick_worker.finished.connect(self._on_quick_preview)
         self.quick_worker.error.connect(self._on_preview_error)
         self.quick_worker.start()
+        self.logger.info("Быстрый просмотр запущен")
 
     def _preview_selected(self) -> None:
         selected = self.fileTable.selectedItems()
@@ -291,6 +299,7 @@ class MainWindow(QMainWindow):
         self.archive_worker.finished.connect(self.on_archive_extracted)
         self.archive_worker.error.connect(self.on_archive_error)
         self.archive_worker.start()
+        self.logger.info("Запущено извлечение архива %s", file_path)
 
     def on_archive_extracted(self, files: list[str]) -> None:
         new_files: list[str] = []
@@ -318,16 +327,20 @@ class MainWindow(QMainWindow):
             self.meta_worker.result.connect(self._update_metadata_row)
             self.meta_worker.error.connect(self._on_meta_error)
             self.meta_worker.start()
+            self.logger.info("Извлечение метаданных запущено")
 
             self.quick_worker = QuickPreviewWorker(new_files)
             self.quick_worker.finished.connect(self._on_quick_preview)
             self.quick_worker.error.connect(self._on_preview_error)
             self.quick_worker.start()
+            self.logger.info("Быстрый просмотр запущен")
 
         QMessageBox.information(self, "Успех", "Архив успешно загружен")
+        self.logger.info("Архив загружен: %s", files)
 
     def on_archive_error(self, message: str) -> None:
         QMessageBox.critical(self, "Ошибка", message)
+        self.logger.error("Ошибка извлечения архива: %s", message)
 
     def _update_metadata_row(
         self, path: str, language: str, paper: str, count: str
@@ -348,15 +361,18 @@ class MainWindow(QMainWindow):
         row = self._row_map.get(path)
         if row is not None:
             self._highlight_row(row, message)
+        self.logger.error("Ошибка превью для %s: %s", path, message)
 
     def _on_quick_preview(self, path: str, text: str) -> None:
         self._preview_map[path] = text
+        self.logger.info("Предпросмотр получен для %s", path)
 
     def _on_meta_error(self, path: str, message: str) -> None:
         self._error_map[path] = message
         row = self._row_map.get(path)
         if row is not None:
             self._highlight_row(row, message)
+        self.logger.error("Ошибка метаданных для %s: %s", path, message)
 
     def _highlight_row(self, row: int, message: str) -> None:
         for col in range(self.fileTable.columnCount()):
@@ -392,6 +408,7 @@ class MainWindow(QMainWindow):
         self.verif_worker.error.connect(self._on_verification_error)
         self.verif_worker.finished.connect(self._on_verification_finished)
         self.verif_worker.start()
+        self.logger.info("Запущена сверка файлов")
 
     def _on_verification_result(
         self, path: str, line: str, ref: str, number: str, score: int
@@ -400,16 +417,26 @@ class MainWindow(QMainWindow):
         row = self._row_map.get(path)
         if row is not None and score < FUZZY_THRESHOLD:
             self._highlight_row(row, "Наименование не сопоставлено")
+        self.logger.info(
+            "Результат сверки %s: line=%s ref=%s score=%s number=%s",
+            path,
+            line,
+            ref,
+            score,
+            number,
+        )
 
     def _on_verification_error(self, path: str, message: str) -> None:
         self._error_map[path] = message
         row = self._row_map.get(path)
         if row is not None:
             self._highlight_row(row, message)
+        self.logger.error("Ошибка сверки для %s: %s", path, message)
 
     def _on_verification_finished(self) -> None:
         self._verification_done = True
         self._preview_selected()
+        self.logger.info("Сверка завершена")
 
     def _show_file_menu(self, pos) -> None:
         index = self.fileTable.indexAt(pos)
@@ -433,6 +460,7 @@ class MainWindow(QMainWindow):
         self._row_map.pop(path, None)
         self._error_map.pop(path, None)
         self._all_paths.discard(path)
+        self.logger.info("Файл удалён: %s", path)
 
         # adjust row indices after removed row
         for p, r in list(self._row_map.items()):
@@ -442,3 +470,21 @@ class MainWindow(QMainWindow):
         self.textPreview.clear()
         self.imagePreview.clear()
         self.previewStack.setCurrentWidget(self.unsupportedLabel)
+
+    def show_logs(self) -> None:
+        """Display last lines of the log file in a dialog."""
+        try:
+            if LOG_FILE.exists():
+                lines = LOG_FILE.read_text(encoding="utf-8").splitlines()
+                tail = "\n".join(lines[-200:])
+            else:
+                tail = "Лог-файл не найден"
+        except Exception as exc:  # pragma: no cover - unexpected errors
+            tail = f"Не удалось загрузить логи: {exc}"
+
+        dlg = QMessageBox(self)
+        dlg.setWindowTitle("Логи")
+        dlg.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        dlg.setIcon(QMessageBox.Icon.Information)
+        dlg.setText(tail)
+        dlg.exec()
