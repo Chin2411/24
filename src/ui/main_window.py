@@ -28,6 +28,8 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
     QFileDialog,
+    QDialog,
+    QPlainTextEdit,
 )
 
 from config import EXTRACTED_FILES_DIR, FUZZY_THRESHOLD, LOG_FILE
@@ -37,6 +39,22 @@ from gui.workers import (
     QuickPreviewWorker,
     VerificationWorker,
 )
+
+
+class LogDialog(QDialog):
+    """Simple dialog to display log text."""
+
+    def __init__(self, text: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Логи")
+        layout = QVBoxLayout(self)
+        self.text_edit = QPlainTextEdit(self)
+        self.text_edit.setReadOnly(True)
+        self.text_edit.setPlainText(text)
+        layout.addWidget(self.text_edit)
+        close_btn = QPushButton("Закрыть", self)
+        close_btn.clicked.connect(self.accept)
+        layout.addWidget(close_btn)
 
 
 class MainWindow(QMainWindow):
@@ -278,6 +296,7 @@ class MainWindow(QMainWindow):
             self.previewStack.setCurrentWidget(self.textPreview)
 
     def _not_implemented(self) -> None:
+        self.logger.info("Нажата кнопка с не реализованной функцией")
         QMessageBox.information(self, "Info", "Функция не реализована.")
 
     def load_archive(self) -> None:
@@ -386,6 +405,7 @@ class MainWindow(QMainWindow):
 
     def clear_buffer(self) -> None:
         """Remove all files from the table and internal lists."""
+        self.logger.info("Очистка буфера")
         self.fileTable.setRowCount(0)
         self._row_map.clear()
         self._error_map.clear()
@@ -472,19 +492,18 @@ class MainWindow(QMainWindow):
         self.previewStack.setCurrentWidget(self.unsupportedLabel)
 
     def show_logs(self) -> None:
-        """Display last lines of the log file in a dialog."""
+        """Display log contents in a dialog."""
+        self.logger.info("Просмотр логов")
         try:
-            if LOG_FILE.exists():
+            if LOG_FILE.exists() and LOG_FILE.stat().st_size > 0:
                 lines = LOG_FILE.read_text(encoding="utf-8").splitlines()
                 tail = "\n".join(lines[-200:])
+            elif not LOG_FILE.exists():
+                tail = "Лог-файл отсутствует"
             else:
-                tail = "Лог-файл не найден"
+                tail = "В логах нет новых сообщений"
         except Exception as exc:  # pragma: no cover - unexpected errors
             tail = f"Не удалось загрузить логи: {exc}"
 
-        dlg = QMessageBox(self)
-        dlg.setWindowTitle("Логи")
-        dlg.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        dlg.setIcon(QMessageBox.Icon.Information)
-        dlg.setText(tail)
+        dlg = LogDialog(tail, self)
         dlg.exec()
