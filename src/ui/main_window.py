@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
+    QMenu,
     QVBoxLayout,
     QWidget,
     QFileDialog,
@@ -107,6 +108,14 @@ class MainWindow(QMainWindow):
 
         main_layout.addWidget(splitter, 1)
 
+        # enable custom context menu for table
+        self.fileTable.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu
+        )
+        self.fileTable.customContextMenuRequested.connect(
+            self._show_file_menu
+        )
+
         # mapping from file path to row index for metadata updates
         self._row_map: dict[str, int] = {}
         # mapping from file path to processing error message
@@ -150,6 +159,7 @@ class MainWindow(QMainWindow):
 
         self.loadArchiveButton.clicked.connect(self.load_archive)
         self.loadFilesButton.clicked.connect(self.load_files)
+        self.clearBufferButton.clicked.connect(self.clear_buffer)
 
         self.fileTable.itemSelectionChanged.connect(self._preview_selected)
 
@@ -310,3 +320,46 @@ class MainWindow(QMainWindow):
             item.setBackground(QColor("#ffc0cb"))
             if not item.toolTip():
                 item.setToolTip(message)
+
+    def clear_buffer(self) -> None:
+        """Remove all files from the table and internal lists."""
+        self.fileTable.setRowCount(0)
+        self._row_map.clear()
+        self._error_map.clear()
+        self._all_paths.clear()
+        self.fileTable.clearSelection()
+        self.textPreview.clear()
+        self.imagePreview.clear()
+        self.previewStack.setCurrentWidget(self.unsupportedLabel)
+
+    def _show_file_menu(self, pos) -> None:
+        index = self.fileTable.indexAt(pos)
+        if not index.isValid():
+            return
+        menu = QMenu(self.fileTable)
+        delete_action = menu.addAction("Удалить файл")
+        action = menu.exec(self.fileTable.viewport().mapToGlobal(pos))
+        if action == delete_action:
+            row = index.row()
+            item = self.fileTable.item(row, 0)
+            if item is None:
+                return
+            path = item.data(Qt.ItemDataRole.UserRole)
+            self._remove_file(path, row)
+
+    def _remove_file(self, path: str, row: int) -> None:
+        """Delete file information from table and internal structures."""
+        self.fileTable.removeRow(row)
+        self.fileTable.clearSelection()
+        self._row_map.pop(path, None)
+        self._error_map.pop(path, None)
+        self._all_paths.discard(path)
+
+        # adjust row indices after removed row
+        for p, r in list(self._row_map.items()):
+            if r > row:
+                self._row_map[p] = r - 1
+
+        self.textPreview.clear()
+        self.imagePreview.clear()
+        self.previewStack.setCurrentWidget(self.unsupportedLabel)
