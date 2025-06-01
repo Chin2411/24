@@ -1,4 +1,7 @@
 from pathlib import Path
 
-# Path to the application log file in the current working directory
-LOG_PATH = Path.cwd() / "application.log"
+# Directory containing this file: src/common
+ROOT_DIR = Path(__file__).resolve().parents[2]
+
+# Path to the application log file in ``logs`` directory next to main.py
+LOG_PATH = ROOT_DIR / "logs" / "application.log"
