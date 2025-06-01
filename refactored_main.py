@@ -3,6 +3,17 @@ import logging
 import logging.config
 import os
 from pathlib import Path
+
+# Базовая конфигурация логирования до импортов PyQt
+LOG_FILE_PATH = Path(__file__).resolve().parent / "application_logs.txt"
+logging.basicConfig(
+    filename=str(LOG_FILE_PATH),
+    level=logging.INFO,
+    format="[%(asctime)s][%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logging.info("Базовая конфигурация логирования инициализирована")
+
 from PyQt6.QtWidgets import QApplication
 from src.ui.main_window import MainWindow
 from config import LOGGING, LOG_FILE
