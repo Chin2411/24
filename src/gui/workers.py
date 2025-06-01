@@ -70,3 +70,20 @@ class ArchiveExtractWorker(QThread):
         except Exception as exc:
             self.error.emit(str(exc))
 
+
+from services.file_metadata import extract_metadata
+
+
+class FileMetadataWorker(QThread):
+    """Worker thread for extracting metadata from files."""
+
+    result = pyqtSignal(str, str, str, str)  # path, language, paper, pages/lines
+
+    def __init__(self, files: list[str]):
+        super().__init__()
+        self.files = files
+
+    def run(self) -> None:
+        for path in self.files:
+            count, language, paper = extract_metadata(Path(path))
+            self.result.emit(path, language, paper, count)

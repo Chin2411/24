@@ -28,7 +28,7 @@ from PyQt6.QtWidgets import (
 )
 
 from config import EXTRACTED_FILES_DIR
-from gui.workers import ArchiveExtractWorker
+from gui.workers import ArchiveExtractWorker, FileMetadataWorker
 
 
 
@@ -103,6 +103,9 @@ class MainWindow(QMainWindow):
 
         main_layout.addWidget(splitter, 1)
 
+        # mapping from file path to row index for metadata updates
+        self._row_map: dict[str, int] = {}
+
         # Нижняя панель кнопок
         bottom_panel = QHBoxLayout()
         self.downloadPrepButton = QPushButton("Скачать предопись")
@@ -171,6 +174,7 @@ class MainWindow(QMainWindow):
         self.archive_worker.start()
 
     def on_archive_extracted(self, files: list[str]) -> None:
+        self._row_map.clear()
         for file_path in files:
             row = self.fileTable.rowCount()
             self.fileTable.insertRow(row)
@@ -180,8 +184,22 @@ class MainWindow(QMainWindow):
             self.fileTable.setItem(row, 2, QTableWidgetItem("-"))
             self.fileTable.setItem(row, 3, QTableWidgetItem("-"))
             self.fileTable.setItem(row, 4, QTableWidgetItem("-"))
+            self._row_map[str(path)] = row
+
+        # start metadata extraction in background
+        self.meta_worker = FileMetadataWorker(files)
+        self.meta_worker.result.connect(self._update_metadata_row)
+        self.meta_worker.start()
 
         QMessageBox.information(self, "Успех", "Архив успешно загружен")
 
     def on_archive_error(self, message: str) -> None:
         QMessageBox.critical(self, "Ошибка", message)
+
+    def _update_metadata_row(self, path: str, language: str, paper: str, count: str) -> None:
+        row = self._row_map.get(path)
+        if row is None:
+            return
+        self.fileTable.setItem(row, 2, QTableWidgetItem(language))
+        self.fileTable.setItem(row, 3, QTableWidgetItem(paper))
+        self.fileTable.setItem(row, 4, QTableWidgetItem(count))
