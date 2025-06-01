@@ -1,6 +1,13 @@
 """Main application window."""
 
 from pathlib import Path
+import sys
+
+# Ensure the project root is in sys.path so that config can be imported even
+# when running this module directly from the ``src/ui`` directory.
+ROOT_DIR = Path(__file__).resolve().parents[2]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.append(str(ROOT_DIR))
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
