@@ -8,6 +8,7 @@
 - Python 3.11+
 - PyQt6
 - Дополнительные зависимости указаны в `requirements.txt`
+- Для улучшенного OCR потребуются `easyocr`, `paddleocr`, `camelot-py`, `pdfplumber` и `tabula-py`
 
 ## Установка
 
