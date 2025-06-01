@@ -47,8 +47,9 @@ def _pdf_metadata(path: Path) -> Tuple[str, str, str]:
         mm_height = height_pt * 0.3527778
         paper = _paper_format_from_dimensions(mm_width, mm_height)
         return str(num_pages), language, paper
-    except Exception:
-        return "-", "-", "-"
+    except Exception as exc:
+        err = f"Ошибка: {exc}"
+        return err, err, err
 
 
 def _docx_metadata(path: Path) -> Tuple[str, str, str]:
@@ -66,8 +67,9 @@ def _docx_metadata(path: Path) -> Tuple[str, str, str]:
         except Exception:
             paper = "-"
         return count, language, paper
-    except Exception:
-        return "-", "-", "-"
+    except Exception as exc:
+        err = f"Ошибка: {exc}"
+        return err, err, err
 
 
 def _text_metadata(path: Path) -> Tuple[str, str, str]:
@@ -77,8 +79,9 @@ def _text_metadata(path: Path) -> Tuple[str, str, str]:
         text_sample = " ".join(lines[:50])
         language = _detect_lang(text_sample)
         return str(len(lines)), language, "-"
-    except Exception:
-        return "-", "-", "-"
+    except Exception as exc:
+        err = f"Ошибка: {exc}"
+        return err, err, err
 
 
 def extract_metadata(path: Path) -> Tuple[str, str, str]:
@@ -89,5 +92,6 @@ def extract_metadata(path: Path) -> Tuple[str, str, str]:
         return _docx_metadata(path)
     if ext in {".txt", ".csv"}:
         return _text_metadata(path)
-    return "-", "-", "-"
+    msg = "Неподдерживаемый формат"
+    return msg, msg, msg
 

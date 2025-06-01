@@ -72,6 +72,7 @@ class ArchiveExtractWorker(QThread):
 
 
 from services.file_metadata import extract_metadata
+from services.file_preview import extract_preview_text
 
 
 class FileMetadataWorker(QThread):
@@ -87,3 +88,21 @@ class FileMetadataWorker(QThread):
         for path in self.files:
             count, language, paper = extract_metadata(Path(path))
             self.result.emit(path, language, paper, count)
+
+
+class FilePreviewWorker(QThread):
+    """Worker thread for extracting file preview text."""
+
+    finished = pyqtSignal(str, str)  # path, preview text
+    error = pyqtSignal(str, str)  # path, error message
+
+    def __init__(self, path: str):
+        super().__init__()
+        self.path = path
+
+    def run(self) -> None:
+        try:
+            text = extract_preview_text(Path(self.path))
+            self.finished.emit(self.path, text)
+        except Exception as exc:
+            self.error.emit(self.path, str(exc))
