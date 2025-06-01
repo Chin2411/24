@@ -66,15 +66,19 @@ class DocumentWorkflow:
                     dest = EXTRACTED_FILES_DIR / path.stem
                     try:
                         extracted = extract_archive(str(path), dest)
+                        logger.info(
+                            "Архив %s извлечён во временную папку", path
+                        )
                         self.add_paths(extracted)
                     except Exception as exc:
-                        logger.error("Archive %s error: %s", p, exc)
+                        logger.exception("Archive %s error", p)
                     continue
                 self.files.append(
                     FileInfo(path=path, name=path.name, ext=path.suffix.lstrip("."))
                 )
+                logger.info("Добавлен файл %s", path)
             except Exception as exc:  # pragma: no cover - unexpected errors
-                logger.error("Failed to add %s: %s", p, exc)
+                logger.exception("Failed to add %s", p)
 
     # ------------------------------------------------------------------
     def extract_metadata(self) -> None:
@@ -86,11 +90,18 @@ class DocumentWorkflow:
                 fi.count = count
                 fi.language = language
                 fi.paper = paper
+                logger.info(
+                    "Метаданные %s: язык=%s, формат=%s, кол-во=%s",
+                    fi.path,
+                    language,
+                    paper,
+                    count,
+                )
                 if count.startswith("Ошибка") or count == "Неподдерживаемый формат":
                     fi.error = count
             except Exception as exc:  # pragma: no cover - unexpected errors
                 fi.error = str(exc)
-                logger.error("Metadata error for %s: %s", fi.path, exc)
+                logger.exception("Metadata error for %s", fi.path)
 
     # ------------------------------------------------------------------
     def quick_preview(self) -> None:
@@ -99,9 +110,14 @@ class DocumentWorkflow:
                 continue
             try:
                 fi.preview = extract_preview_text(fi.path)
+                logger.info(
+                    "Предпросмотр %s: %s",
+                    fi.path,
+                    fi.preview[:50].replace("\n", " "),
+                )
             except Exception as exc:  # pragma: no cover - unexpected errors
                 fi.error = str(exc)
-                logger.error("Preview error for %s: %s", fi.path, exc)
+                logger.exception("Preview error for %s", fi.path)
 
     # ------------------------------------------------------------------
     def verify(self) -> None:
@@ -136,11 +152,19 @@ class DocumentWorkflow:
                 fi.found_line = best_line
                 fi.reference = best_ref if best_score >= self.threshold else ""
                 fi.score = best_score
+                logger.info(
+                    "Результат сверки %s: line='%s' ref='%s' score=%s number=%s",
+                    fi.path,
+                    best_line,
+                    fi.reference,
+                    best_score,
+                    fi.number,
+                )
                 if best_score < self.threshold:
                     fi.error = fi.error or "Наименование не сопоставлено"
             except Exception as exc:  # pragma: no cover - unexpected errors
                 fi.error = "Ошибка сверки"
-                logger.error("Verification error for %s: %s", fi.path, exc)
+                logger.exception("Verification error for %s", fi.path)
 
     # ------------------------------------------------------------------
     def export_inventory(self, out_path: str | Path) -> None:
@@ -163,3 +187,4 @@ class DocumentWorkflow:
             df.to_excel(out_p, index=False)
         else:
             df.to_csv(out_p, index=False, encoding="utf-8")
+        logger.info("Инвентаризация сохранена в %s", out_p)

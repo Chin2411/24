@@ -11,6 +11,7 @@ LOG_FILE = BASE_DIR / "application_logs.txt"
 # Создаем необходимые директории
 TEMP_DIR.mkdir(exist_ok=True)
 EXTRACTED_FILES_DIR.mkdir(exist_ok=True)
+LOG_FILE.parent.mkdir(exist_ok=True)
 
 # Настройки безопасности
 ALLOWED_EXTENSIONS: Dict[str, List[str]] = {
@@ -47,7 +48,7 @@ DOC_IMAGE_THRESHOLD = 128  # Порог бинаризации для OCR
 
 # Настройки логирования
 LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
-LOG_LEVEL = logging.DEBUG  # Используем константу из модуля logging
+LOG_LEVEL = logging.INFO  # базовый уровень логирования
 
 # Конфигурация логирования
 LOGGING = {
