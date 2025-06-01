@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import sys
+import logging
 
 # Ensure the project root is in sys.path so that config can be imported even
 # when running this module directly from the ``src/ui`` directory.
@@ -30,6 +31,8 @@ from PyQt6.QtWidgets import (
 )
 
 from config import EXTRACTED_FILES_DIR
+from config import LOG_FILE
+from ui.log_viewer import LogViewerDialog
 from gui.workers import (
     ArchiveExtractWorker,
     FileMetadataWorker,
@@ -40,10 +43,13 @@ from gui.workers import (
 class MainWindow(QMainWindow):
     """Главное окно приложения."""
 
+    logger = logging.getLogger(__name__)
+
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Document Processor")
         self.resize(1024, 768)
+        self.logger.info("Главное окно инициализировано")
 
         central_widget = QWidget(self)
         self.setCentralWidget(central_widget)
@@ -146,7 +152,6 @@ class MainWindow(QMainWindow):
         for btn in (
             self.clearBufferButton,
             self.runVerificationButton,
-            self.viewLogsButton,
             self.referenceButton,
             self.downloadPrepButton,
             self.loadPrepButton,
@@ -160,6 +165,7 @@ class MainWindow(QMainWindow):
         self.loadArchiveButton.clicked.connect(self.load_archive)
         self.loadFilesButton.clicked.connect(self.load_files)
         self.clearBufferButton.clicked.connect(self.clear_buffer)
+        self.viewLogsButton.clicked.connect(self.show_logs)
 
         self.fileTable.itemSelectionChanged.connect(self._preview_selected)
 
@@ -173,6 +179,8 @@ class MainWindow(QMainWindow):
         )
         if not files:
             return
+
+        self.logger.info("Загружено файлов: %s", len(files))
 
         new_files: list[str] = []
         for f in files:
@@ -194,6 +202,7 @@ class MainWindow(QMainWindow):
             self._row_map[abs_path] = row
             self._all_paths.add(abs_path)
             new_files.append(abs_path)
+            self.logger.info("Добавлен файл %s", abs_path)
 
         if not new_files:
             return
@@ -201,6 +210,7 @@ class MainWindow(QMainWindow):
         self.meta_worker = FileMetadataWorker(new_files)
         self.meta_worker.result.connect(self._update_metadata_row)
         self.meta_worker.error.connect(self._on_meta_error)
+        self.logger.info("Запуск потока извлечения метаданных")
         self.meta_worker.start()
 
     def _preview_selected(self) -> None:
@@ -218,6 +228,8 @@ class MainWindow(QMainWindow):
         if not path:
             self.previewStack.setCurrentWidget(self.unsupportedLabel)
             return
+
+        self.logger.info("Создание превью для %s", path)
 
         self.textPreview.setPlainText("Загрузка...")
         self.previewStack.setCurrentWidget(self.textPreview)
@@ -245,12 +257,14 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "Выбран архив", file_path)
 
         dest = EXTRACTED_FILES_DIR / Path(file_path).stem
+        self.logger.info("Запуск распаковки архива %s", file_path)
         self.archive_worker = ArchiveExtractWorker(file_path, dest)
         self.archive_worker.finished.connect(self.on_archive_extracted)
         self.archive_worker.error.connect(self.on_archive_error)
         self.archive_worker.start()
 
     def on_archive_extracted(self, files: list[str]) -> None:
+        self.logger.info("Архив распакован, файлов: %s", len(files))
         new_files: list[str] = []
         for file_path in files:
             abs_path = str(Path(file_path).resolve())
@@ -280,6 +294,7 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "Успех", "Архив успешно загружен")
 
     def on_archive_error(self, message: str) -> None:
+        self.logger.error("Ошибка распаковки архива: %s", message)
         QMessageBox.critical(self, "Ошибка", message)
 
     def _update_metadata_row(
@@ -295,10 +310,12 @@ class MainWindow(QMainWindow):
             self._highlight_row(row, self._error_map[path])
 
     def _on_preview_ready(self, path: str, text: str) -> None:
+        self.logger.info("Превью готово для %s", path)
         self.textPreview.setPlainText(text)
         self.previewStack.setCurrentWidget(self.textPreview)
 
     def _on_preview_image(self, path: str, image_path: str) -> None:
+        self.logger.warning("Показ изображения превью для %s", path)
         pixmap = QPixmap(image_path)
         self.imagePreview.setPixmap(
             pixmap.scaled(
@@ -311,6 +328,7 @@ class MainWindow(QMainWindow):
         self.previewStack.setCurrentWidget(self.imagePreview)
 
     def _on_preview_error(self, path: str, message: str) -> None:
+        self.logger.error("Ошибка превью %s: %s", path, message)
         self.textPreview.setPlainText(message)
         self.previewStack.setCurrentWidget(self.textPreview)
         self._error_map[path] = message
@@ -319,6 +337,7 @@ class MainWindow(QMainWindow):
             self._highlight_row(row, message)
 
     def _on_meta_error(self, path: str, message: str) -> None:
+        self.logger.warning("Ошибка метаданных %s: %s", path, message)
         self._error_map[path] = message
         row = self._row_map.get(path)
         if row is not None:
@@ -336,6 +355,7 @@ class MainWindow(QMainWindow):
 
     def clear_buffer(self) -> None:
         """Remove all files from the table and internal lists."""
+        self.logger.info("Очистка буфера")
         self.fileTable.setRowCount(0)
         self._row_map.clear()
         self._error_map.clear()
@@ -362,6 +382,7 @@ class MainWindow(QMainWindow):
 
     def _remove_file(self, path: str, row: int) -> None:
         """Delete file information from table and internal structures."""
+        self.logger.info("Удаление файла %s", path)
         self.fileTable.removeRow(row)
         self.fileTable.clearSelection()
         self._row_map.pop(path, None)
@@ -376,3 +397,13 @@ class MainWindow(QMainWindow):
         self.textPreview.clear()
         self.imagePreview.clear()
         self.previewStack.setCurrentWidget(self.unsupportedLabel)
+
+    def show_logs(self) -> None:
+        """Display log viewer dialog."""
+        try:
+            self.logger.info("Открытие окна логов")
+            dlg = LogViewerDialog(LOG_FILE, self)
+            dlg.exec()
+        except Exception as exc:  # pragma: no cover - runtime errors
+            self.logger.exception("Ошибка отображения логов")
+            QMessageBox.critical(self, "Ошибка", str(exc))

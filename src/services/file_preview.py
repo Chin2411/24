@@ -36,7 +36,7 @@ def _deskew_image(img: Image.Image) -> Image.Image:
         rotated = cv2.warpAffine(np.array(img), M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
         return Image.fromarray(rotated)
     except Exception as exc:  # pragma: no cover - optional dependency
-        logger.error("Deskew failed: %s", exc)
+        logger.exception("Deskew failed")
         return img
 
 
@@ -61,7 +61,7 @@ def _ocr_pytesseract(img: Image.Image) -> str:
             t = pytesseract.image_to_string(img, lang="rus+eng", config=conf)
             texts.append(t)
         except Exception as exc:  # pragma: no cover - unexpected errors
-            logger.error("pytesseract failed for psm %s: %s", psm, exc)
+            logger.exception("pytesseract failed for psm %s", psm)
     return max(texts, key=len, default="")
 
 
@@ -74,7 +74,7 @@ def _ocr_easyocr(img: Image.Image) -> str:
         result = reader.readtext(np.array(img))
         return "\n".join(r[1] for r in result)
     except Exception as exc:  # pragma: no cover - optional dependency
-        logger.error("EasyOCR error: %s", exc)
+        logger.exception("EasyOCR error")
     return ""
 
 
@@ -88,7 +88,7 @@ def _ocr_paddle(img: Image.Image) -> str:
         lines = [line[1][0] for line in result[0]]
         return "\n".join(lines)
     except Exception as exc:  # pragma: no cover - optional dependency
-        logger.error("PaddleOCR error: %s", exc)
+        logger.exception("PaddleOCR error")
     return ""
 
 
@@ -141,7 +141,7 @@ def _extract_tables(path: Path, pages: str) -> str:
             return tables_text
         logger.info("Camelot returned no tables")
     except Exception as exc:  # pragma: no cover - optional dependency
-        logger.error("Camelot error: %s", exc)
+        logger.exception("Camelot error for %s", path)
     try:
         import pdfplumber
         import pandas as pd
@@ -159,7 +159,7 @@ def _extract_tables(path: Path, pages: str) -> str:
             return tables_text
         logger.info("pdfplumber returned no tables")
     except Exception as exc:  # pragma: no cover - optional dependency
-        logger.error("pdfplumber error: %s", exc)
+        logger.exception("pdfplumber error for %s", path)
 
     # --- Fallback using OpenCV cell detection ----------------------------
     try:
@@ -167,7 +167,7 @@ def _extract_tables(path: Path, pages: str) -> str:
         if tables_text:
             return tables_text
     except Exception as exc:  # pragma: no cover - unexpected errors
-        logger.error("OpenCV table extraction failed: %s", exc)
+        logger.exception("OpenCV table extraction failed for %s", path)
     return ""
 
 
@@ -201,6 +201,7 @@ def _pdf_preview(path: Path) -> tuple[str, str | None]:
     Raises ``RuntimeError`` if no text could be extracted.
     """
 
+    logger.info("Извлечение превью PDF: %s", path)
     PAGE_LIMIT = 3
     MAX_CHARS = 2000
 
@@ -221,7 +222,7 @@ def _pdf_preview(path: Path) -> tuple[str, str | None]:
         last_error = "PyPDF2 не нашёл текст"
     except Exception as exc:  # pragma: no cover - unexpected errors
         last_error = f"Ошибка PyPDF2: {exc}"
-        logger.error(last_error)
+        logger.exception(last_error)
 
     # --- Try pdfminer ----------------------------------------------------
     try:
@@ -232,7 +233,7 @@ def _pdf_preview(path: Path) -> tuple[str, str | None]:
         last_error = "pdfminer не нашёл текст"
     except Exception as exc:  # pragma: no cover - unexpected errors
         last_error = f"Ошибка pdfminer: {exc}"
-        logger.error(last_error)
+        logger.exception(last_error)
 
     pages = ",".join(str(i + 1) for i in range(PAGE_LIMIT))
 
@@ -248,7 +249,7 @@ def _pdf_preview(path: Path) -> tuple[str, str | None]:
                     Path("logs").mkdir(exist_ok=True)
                     img.save(Path("logs") / f"{path.stem}_page1.png")
                 except Exception as exc:  # pragma: no cover - optional
-                    logger.error("Failed to save debug image: %s", exc)
+                    logger.exception("Failed to save debug image")
             img = _preprocess_image(img)
             ocr_text = _ocr_pytesseract(img)
             if len(ocr_text.strip()) < 20:
@@ -262,7 +263,7 @@ def _pdf_preview(path: Path) -> tuple[str, str | None]:
         doc.close()
     except Exception as exc:  # pragma: no cover - unexpected errors
         last_error = f"Ошибка OCR: {exc}"
-        logger.error(last_error)
+        logger.exception(last_error)
 
     if len(text.strip()) < 50:
         table_text = _extract_tables(path, pages)
@@ -282,7 +283,7 @@ def _pdf_preview(path: Path) -> tuple[str, str | None]:
         Image.open(BytesIO(pix.tobytes())).save(image_path)
         doc.close()
     except Exception as exc:  # pragma: no cover - unexpected errors
-        logger.error("Failed to save preview image: %s", exc)
+        logger.exception("Failed to save preview image")
 
     logger.error(
         "Не удалось корректно распознать таблицу: %s", last_error or "unknown"
@@ -291,6 +292,7 @@ def _pdf_preview(path: Path) -> tuple[str, str | None]:
 
 
 def _docx_preview(path: Path) -> str:
+    logger.info("Извлечение превью DOCX: %s", path)
     doc = Document(str(path))
     text = ""
     for para in doc.paragraphs:
@@ -302,6 +304,7 @@ def _docx_preview(path: Path) -> str:
 
 
 def _text_preview(path: Path) -> str:
+    logger.info("Извлечение превью текста: %s", path)
     lines: list[str] = []
     try:
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
@@ -316,6 +319,7 @@ def _text_preview(path: Path) -> str:
 
 
 def _image_preview(path: Path) -> str:
+    logger.info("Извлечение превью изображения: %s", path)
     try:
         with Image.open(path) as img:
             img = _preprocess_image(img)
@@ -332,7 +336,7 @@ def _image_preview(path: Path) -> str:
                 "OCR не справился, возможно, сложная таблица или качество недостаточно"
             )
     except Exception as exc:
-        logger.error("Ошибка OCR: %s", exc)
+        logger.exception("Ошибка OCR в файле %s", path)
         raise RuntimeError(f"Ошибка OCR: {exc}")
 
 
@@ -342,6 +346,7 @@ SUPPORTED_DOCS = {".docx", ".doc"}
 
 
 def extract_preview(path: Path) -> tuple[str, str | None]:
+    logger.info("Извлечение превью файла: %s", path)
     ext = path.suffix.lower()
     try:
         if ext == ".pdf":
@@ -358,5 +363,6 @@ def extract_preview(path: Path) -> tuple[str, str | None]:
 
 
 def extract_preview_text(path: Path) -> str:
+    logger.info("Извлечение текстового превью из файла: %s", path)
     text, _ = extract_preview(path)
     return text

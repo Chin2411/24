@@ -41,7 +41,8 @@ DOC_IMAGE_DPI = 300  # DPI для конвертации в изображени
 DOC_IMAGE_THRESHOLD = 128  # Порог бинаризации для OCR
 
 # Настройки логирования
-LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
+LOG_FORMAT = "[%(asctime)s][%(levelname)s] %(message)s"
+LOG_DATEFMT = "%Y-%m-%d %H:%M:%S"
 LOG_LEVEL = logging.DEBUG  # Используем константу из модуля logging
 
 # Конфигурация логирования
@@ -50,7 +51,8 @@ LOGGING = {
     'disable_existing_loggers': False,
     'formatters': {
         'standard': {
-            'format': LOG_FORMAT
+            'format': LOG_FORMAT,
+            'datefmt': LOG_DATEFMT,
         },
     },
     'handlers': {
