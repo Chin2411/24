@@ -3,6 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 from io import BytesIO
 import logging
+import hashlib
+import time
+from concurrent.futures import ProcessPoolExecutor
 
 from PyPDF2 import PdfReader
 from pdfminer.high_level import extract_text as pdfminer_extract_text
@@ -14,10 +17,34 @@ import pytesseract
 import fitz
 import cv2
 
-from config import PDF_IMAGE_DPI
+from config import PDF_IMAGE_DPI, TEMP_DIR
 
 
 logger = logging.getLogger(__name__)
+
+
+def _cache_file_name(path: Path) -> Path:
+    """Return cache file path for given source path."""
+    h = hashlib.md5(str(path.resolve()).encode()).hexdigest()
+    return TEMP_DIR / f"{h}.preview.txt"
+
+
+def _load_cached_preview(path: Path) -> str | None:
+    cache_path = _cache_file_name(path)
+    if cache_path.exists():
+        try:
+            return cache_path.read_text(encoding="utf-8")
+        except Exception as exc:
+            logger.error("Failed to read cache %s: %s", cache_path, exc)
+    return None
+
+
+def _save_cached_preview(path: Path, text: str) -> None:
+    cache_path = _cache_file_name(path)
+    try:
+        cache_path.write_text(text, encoding="utf-8")
+    except Exception as exc:
+        logger.error("Failed to write cache %s: %s", cache_path, exc)
 
 
 def _deskew_image(img: Image.Image) -> Image.Image:
@@ -90,6 +117,18 @@ def _ocr_paddle(img: Image.Image) -> str:
     except Exception as exc:  # pragma: no cover - optional dependency
         logger.error("PaddleOCR error: %s", exc)
     return ""
+
+
+def _ocr_page(page_bytes: bytes) -> str:
+    """OCR helper for a single PDF page."""
+    img = Image.open(BytesIO(page_bytes))
+    img = _preprocess_image(img)
+    text = _ocr_pytesseract(img)
+    if len(text.strip()) < 20:
+        text = _ocr_easyocr(img)
+    if len(text.strip()) < 20:
+        text = _ocr_paddle(img)
+    return text
 
 
 def _ocr_table_cells(img: Image.Image) -> str:
@@ -240,26 +279,41 @@ def _pdf_preview(path: Path) -> tuple[str, str | None]:
     text = ""
     try:
         doc = fitz.open(str(path))
+        pages_pix: list[bytes] = []
         for idx, page in enumerate(doc[:PAGE_LIMIT]):
             pix = page.get_pixmap(dpi=PDF_IMAGE_DPI)
-            img = Image.open(BytesIO(pix.tobytes()))
+            pages_pix.append(pix.tobytes())
             if idx == 0:
                 try:
                     Path("logs").mkdir(exist_ok=True)
-                    img.save(Path("logs") / f"{path.stem}_page1.png")
+                    Image.open(BytesIO(pix.tobytes())).save(
+                        Path("logs") / f"{path.stem}_page1.png"
+                    )
                 except Exception as exc:  # pragma: no cover - optional
                     logger.error("Failed to save debug image: %s", exc)
-            img = _preprocess_image(img)
-            ocr_text = _ocr_pytesseract(img)
-            if len(ocr_text.strip()) < 20:
-                ocr_text = _ocr_easyocr(img)
-            if len(ocr_text.strip()) < 20:
-                ocr_text = _ocr_paddle(img)
-            text += ocr_text + "\n"
-            if len(text) >= MAX_CHARS:
-                text = text[:MAX_CHARS]
-                break
         doc.close()
+
+        start_all = time.perf_counter()
+        with ProcessPoolExecutor(max_workers=4) as ex:
+            futures = []
+            start_times: list[float] = []
+            for pb in pages_pix:
+                futures.append(ex.submit(_ocr_page, pb))
+                start_times.append(time.perf_counter())
+
+            for idx, fut in enumerate(futures):
+                ocr_text = fut.result()
+                duration = time.perf_counter() - start_times[idx]
+                if duration > 5:
+                    logger.warning(
+                        "OCR page %s took %.2f sec", idx + 1, duration
+                    )
+                text += ocr_text + "\n"
+                if len(text) >= MAX_CHARS:
+                    text = text[:MAX_CHARS]
+                    break
+        total = time.perf_counter() - start_all
+        logger.info("OCR of %s pages completed in %.2f sec", len(pages_pix), total)
     except Exception as exc:  # pragma: no cover - unexpected errors
         last_error = f"Ошибка OCR: {exc}"
         logger.error(last_error)
@@ -271,6 +325,7 @@ def _pdf_preview(path: Path) -> tuple[str, str | None]:
         text += table_text
 
     if text.strip():
+        _save_cached_preview(path, text.strip())
         return text.strip(), None
 
     image_path = None
@@ -342,19 +397,27 @@ SUPPORTED_DOCS = {".docx", ".doc"}
 
 
 def extract_preview(path: Path) -> tuple[str, str | None]:
+    cached = _load_cached_preview(path)
+    if cached:
+        return cached, None
+
     ext = path.suffix.lower()
     try:
         if ext == ".pdf":
-            return _pdf_preview(path)
-        if ext in SUPPORTED_DOCS:
-            return _docx_preview(path), None
-        if ext in SUPPORTED_TEXT:
-            return _text_preview(path), None
-        if ext in SUPPORTED_IMAGES:
-            return _image_preview(path), None
+            text, img = _pdf_preview(path)
+        elif ext in SUPPORTED_DOCS:
+            text, img = _docx_preview(path), None
+        elif ext in SUPPORTED_TEXT:
+            text, img = _text_preview(path), None
+        elif ext in SUPPORTED_IMAGES:
+            text, img = _image_preview(path), None
+        else:
+            raise RuntimeError("Просмотр не поддерживается")
+        if text:
+            _save_cached_preview(path, text)
+        return text, img
     except Exception as exc:
         raise RuntimeError(str(exc))
-    raise RuntimeError("Просмотр не поддерживается")
 
 
 def extract_preview_text(path: Path) -> str:
