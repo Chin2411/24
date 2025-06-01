@@ -50,7 +50,15 @@ def _pdf_metadata(path: Path) -> Tuple[str, str, str]:
         mm_width = width_pt * 0.3527778
         mm_height = height_pt * 0.3527778
         paper = _paper_format_from_dimensions(mm_width, mm_height)
-        return str(num_pages), language, paper
+        result = (str(num_pages), language, paper)
+        logger.info(
+            "PDF метаданные %s: pages=%s lang=%s paper=%s",
+            path,
+            result[0],
+            result[1],
+            result[2],
+        )
+        return result
     except Exception as exc:
         logger.exception("Ошибка чтения PDF %s", path)
         err = f"Ошибка: {exc}"
@@ -72,7 +80,15 @@ def _docx_metadata(path: Path) -> Tuple[str, str, str]:
             paper = _paper_format_from_dimensions(width_mm, height_mm)
         except Exception:
             paper = "-"
-        return count, language, paper
+        result = (count, language, paper)
+        logger.info(
+            "DOCX метаданные %s: count=%s lang=%s paper=%s",
+            path,
+            result[0],
+            result[1],
+            result[2],
+        )
+        return result
     except Exception as exc:
         logger.exception("Ошибка чтения DOCX %s", path)
         err = f"Ошибка: {exc}"
@@ -86,7 +102,14 @@ def _text_metadata(path: Path) -> Tuple[str, str, str]:
             lines = f.readlines()
         text_sample = " ".join(lines[:50])
         language = _detect_lang(text_sample)
-        return str(len(lines)), language, "-"
+        result = (str(len(lines)), language, "-")
+        logger.info(
+            "TEXT метаданные %s: lines=%s lang=%s",
+            path,
+            result[0],
+            result[1],
+        )
+        return result
     except Exception as exc:
         logger.exception("Ошибка чтения текста %s", path)
         err = f"Ошибка: {exc}"
@@ -97,11 +120,17 @@ def extract_metadata(path: Path) -> Tuple[str, str, str]:
     logger.info("Извлечение метаданных из %s", path)
     ext = path.suffix.lower()
     if ext == ".pdf":
-        return _pdf_metadata(path)
+        result = _pdf_metadata(path)
+        logger.info("Завершено извлечение метаданных PDF %s", path)
+        return result
     if ext in {".docx", ".doc"}:
-        return _docx_metadata(path)
+        result = _docx_metadata(path)
+        logger.info("Завершено извлечение метаданных DOCX %s", path)
+        return result
     if ext in {".txt", ".csv"}:
-        return _text_metadata(path)
+        result = _text_metadata(path)
+        logger.info("Завершено извлечение метаданных TEXT %s", path)
+        return result
     msg = "Неподдерживаемый формат"
     return msg, msg, msg
 

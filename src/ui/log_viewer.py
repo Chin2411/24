@@ -60,9 +60,13 @@ class LogViewerDialog(QDialog):
     def load_logs(self) -> None:
         """Load last N lines from log file."""
         try:
-            if not self.log_file.exists():
+            if not self.log_file.exists() or self.log_file.stat().st_size == 0:
                 self.text.clear()
-                QMessageBox.information(self, "Логи", "Файл логов отсутствует")
+                QMessageBox.information(
+                    self,
+                    "Логи",
+                    "Лог-файл отсутствует или не создан — проверь настройки логирования",
+                )
                 return
             lines = self.log_file.read_text(encoding="utf-8", errors="ignore").splitlines()
             lines = lines[-self.max_lines :]

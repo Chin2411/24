@@ -212,6 +212,7 @@ class MainWindow(QMainWindow):
         self.meta_worker.error.connect(self._on_meta_error)
         self.logger.info("Запуск потока извлечения метаданных")
         self.meta_worker.start()
+        self.logger.info("Загрузка файлов завершена")
 
     def _preview_selected(self) -> None:
         selected = self.fileTable.selectedItems()
@@ -262,6 +263,7 @@ class MainWindow(QMainWindow):
         self.archive_worker.finished.connect(self.on_archive_extracted)
         self.archive_worker.error.connect(self.on_archive_error)
         self.archive_worker.start()
+        self.logger.info("Поток распаковки архива запущен")
 
     def on_archive_extracted(self, files: list[str]) -> None:
         self.logger.info("Архив распакован, файлов: %s", len(files))
@@ -290,6 +292,8 @@ class MainWindow(QMainWindow):
             self.meta_worker.result.connect(self._update_metadata_row)
             self.meta_worker.error.connect(self._on_meta_error)
             self.meta_worker.start()
+
+        self.logger.info("Распаковка архива завершена")
 
         QMessageBox.information(self, "Успех", "Архив успешно загружен")
 
@@ -364,6 +368,8 @@ class MainWindow(QMainWindow):
         self.textPreview.clear()
         self.imagePreview.clear()
         self.previewStack.setCurrentWidget(self.unsupportedLabel)
+        self.logger.info("Файл %s удален", path)
+        self.logger.info("Буфер очищен")
 
     def _show_file_menu(self, pos) -> None:
         index = self.fileTable.indexAt(pos)
@@ -404,6 +410,7 @@ class MainWindow(QMainWindow):
             self.logger.info("Открытие окна логов")
             dlg = LogViewerDialog(LOG_FILE, self)
             dlg.exec()
+            self.logger.info("Окно логов закрыто")
         except Exception as exc:  # pragma: no cover - runtime errors
             self.logger.exception("Ошибка отображения логов")
             QMessageBox.critical(self, "Ошибка", str(exc))

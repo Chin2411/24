@@ -75,6 +75,9 @@ class ArchiveExtractWorker(QThread):
             )
             files = extract_archive(self.archive_path, self.dest_dir)
             self.finished.emit(files)
+            logger.info(
+                "Завершена распаковка %s, файлов: %s", self.archive_path, len(files)
+            )
         except Exception as exc:
             logger.exception("Ошибка извлечения архива %s", self.archive_path)
             self.error.emit(str(exc))
@@ -102,6 +105,13 @@ class FileMetadataWorker(QThread):
                 logger.warning("Ошибка метаданных %s: %s", path, count)
                 self.error.emit(path, count)
             self.result.emit(path, language, paper, count)
+            logger.info(
+                "Метаданные получены для %s: lang=%s paper=%s count=%s",
+                path,
+                language,
+                paper,
+                count,
+            )
 
 
 class FilePreviewWorker(QThread):
@@ -126,6 +136,7 @@ class FilePreviewWorker(QThread):
             elif not image:
                 logger.warning("Не удалось создать превью для %s", self.path)
                 self.error.emit(self.path, "Не удалось создать превью")
+            logger.info("Превью успешно создано для %s", self.path)
         except Exception as exc:
             logger.exception("Ошибка создания превью %s", self.path)
             self.error.emit(self.path, str(exc))
