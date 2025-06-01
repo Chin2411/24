@@ -10,6 +10,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.append(str(ROOT_DIR))
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
@@ -109,6 +110,8 @@ class MainWindow(QMainWindow):
 
         # mapping from file path to row index for metadata updates
         self._row_map: dict[str, int] = {}
+        # mapping from file path to processing error message
+        self._error_map: dict[str, str] = {}
 
         # Нижняя панель кнопок
         bottom_panel = QHBoxLayout()
@@ -212,8 +215,10 @@ class MainWindow(QMainWindow):
             self._row_map[str(path)] = row
 
         # start metadata extraction in background
+        self._error_map.clear()
         self.meta_worker = FileMetadataWorker(files)
         self.meta_worker.result.connect(self._update_metadata_row)
+        self.meta_worker.error.connect(self._on_meta_error)
         self.meta_worker.start()
 
         QMessageBox.information(self, "Успех", "Архив успешно загружен")
@@ -228,6 +233,8 @@ class MainWindow(QMainWindow):
         self.fileTable.setItem(row, 2, QTableWidgetItem(language))
         self.fileTable.setItem(row, 3, QTableWidgetItem(paper))
         self.fileTable.setItem(row, 4, QTableWidgetItem(count))
+        if path in self._error_map:
+            self._highlight_row(row, self._error_map[path])
 
     def _on_preview_ready(self, path: str, text: str) -> None:
         self.textPreview.setPlainText(text)
@@ -236,3 +243,23 @@ class MainWindow(QMainWindow):
     def _on_preview_error(self, path: str, message: str) -> None:
         self.textPreview.setPlainText(message)
         self.previewStack.setCurrentWidget(self.textPreview)
+        self._error_map[path] = message
+        row = self._row_map.get(path)
+        if row is not None:
+            self._highlight_row(row, message)
+
+    def _on_meta_error(self, path: str, message: str) -> None:
+        self._error_map[path] = message
+        row = self._row_map.get(path)
+        if row is not None:
+            self._highlight_row(row, message)
+
+    def _highlight_row(self, row: int, message: str) -> None:
+        for col in range(self.fileTable.columnCount()):
+            item = self.fileTable.item(row, col)
+            if item is None:
+                item = QTableWidgetItem("-")
+                self.fileTable.setItem(row, col, item)
+            item.setBackground(QColor("#ffc0cb"))
+            if not item.toolTip():
+                item.setToolTip(message)
