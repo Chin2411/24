@@ -10,7 +10,7 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 if str(ROOT_DIR) not in sys.path:
     sys.path.append(str(ROOT_DIR))
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QThread
 from PyQt6.QtGui import QColor, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -38,6 +38,7 @@ from gui.workers import (
     FileMetadataWorker,
     FilePreviewWorker,
 )
+from concurrent.futures import ThreadPoolExecutor
 
 
 class MainWindow(QMainWindow):
@@ -128,6 +129,10 @@ class MainWindow(QMainWindow):
         self._error_map: dict[str, str] = {}
         # set of all added file paths to prevent duplicates
         self._all_paths: set[str] = set()
+        # active worker threads
+        self._workers: list[QThread] = []
+        # executor for possible background tasks
+        self.executor = ThreadPoolExecutor()
 
         # Нижняя панель кнопок
         bottom_panel = QHBoxLayout()
@@ -168,6 +173,12 @@ class MainWindow(QMainWindow):
         self.viewLogsButton.clicked.connect(self.show_logs)
 
         self.fileTable.itemSelectionChanged.connect(self._preview_selected)
+
+    def _start_worker(self, worker: QThread) -> None:
+        """Start and track a QThread worker."""
+        self._workers.append(worker)
+        worker.finished.connect(lambda w=worker: self._workers.remove(w))
+        worker.start()
 
     def load_files(self) -> None:
         """Open file dialog and add selected files to the table."""
@@ -211,7 +222,7 @@ class MainWindow(QMainWindow):
         self.meta_worker.result.connect(self._update_metadata_row)
         self.meta_worker.error.connect(self._on_meta_error)
         self.logger.info("Запуск потока извлечения метаданных")
-        self.meta_worker.start()
+        self._start_worker(self.meta_worker)
         self.logger.info("Загрузка файлов завершена")
 
     def _preview_selected(self) -> None:
@@ -238,7 +249,7 @@ class MainWindow(QMainWindow):
         self.preview_worker.finished.connect(self._on_preview_ready)
         self.preview_worker.imageReady.connect(self._on_preview_image)
         self.preview_worker.error.connect(self._on_preview_error)
-        self.preview_worker.start()
+        self._start_worker(self.preview_worker)
 
     def _not_implemented(self) -> None:
         QMessageBox.information(self, "Info", "Функция не реализована.")
@@ -262,7 +273,7 @@ class MainWindow(QMainWindow):
         self.archive_worker = ArchiveExtractWorker(file_path, dest)
         self.archive_worker.finished.connect(self.on_archive_extracted)
         self.archive_worker.error.connect(self.on_archive_error)
-        self.archive_worker.start()
+        self._start_worker(self.archive_worker)
         self.logger.info("Поток распаковки архива запущен")
 
     def on_archive_extracted(self, files: list[str]) -> None:
@@ -291,7 +302,7 @@ class MainWindow(QMainWindow):
             self.meta_worker = FileMetadataWorker(new_files)
             self.meta_worker.result.connect(self._update_metadata_row)
             self.meta_worker.error.connect(self._on_meta_error)
-            self.meta_worker.start()
+            self._start_worker(self.meta_worker)
 
         self.logger.info("Распаковка архива завершена")
 
@@ -414,3 +425,13 @@ class MainWindow(QMainWindow):
         except Exception as exc:  # pragma: no cover - runtime errors
             self.logger.exception("Ошибка отображения логов")
             QMessageBox.critical(self, "Ошибка", str(exc))
+
+    def closeEvent(self, event) -> None:  # type: ignore[override]
+        """Ensure all background threads are properly terminated."""
+        for worker in list(self._workers):
+            if worker.isRunning():
+                worker.quit()
+                worker.wait()
+        if hasattr(self, "executor"):
+            self.executor.shutdown(wait=True)
+        super().closeEvent(event)
