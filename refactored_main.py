@@ -4,15 +4,17 @@ import logging.config
 from pathlib import Path
 from PyQt6.QtWidgets import QApplication
 from src.ui.main_window import MainWindow
-from config import LOGGING, LOG_FILE
+from config import LOGGING
 
 # Настройка логирования
 def setup_logging():
     # Создаем директорию для логов, если она не существует
-    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-
+    log_dir = Path("logs")
+    log_dir.mkdir(parents=True, exist_ok=True)
+    
     # Обновляем путь к файлу логов в конфигурации
-    LOGGING['handlers']['file']['filename'] = str(LOG_FILE)
+    log_file = log_dir / "application.log"
+    LOGGING['handlers']['file']['filename'] = str(log_file)
     
     # Применяем конфигурацию
     logging.config.dictConfig(LOGGING)

@@ -11,13 +11,12 @@ LOG_FILE = BASE_DIR / "application_logs.txt"
 # Создаем необходимые директории
 TEMP_DIR.mkdir(exist_ok=True)
 EXTRACTED_FILES_DIR.mkdir(exist_ok=True)
-LOG_FILE.parent.mkdir(exist_ok=True)
 
 # Настройки безопасности
 ALLOWED_EXTENSIONS: Dict[str, List[str]] = {
-    "archives": [".zip", ".rar", ".7z"],
-    "documents": [".pdf", ".docx", ".doc", ".txt", ".rtf"],
-    "images": [".jpg", ".jpeg", ".png", ".tiff", ".bmp"],
+    'archives': ['.zip', '.rar', '.7z'],
+    'documents': ['.pdf', '.docx', '.doc', '.txt', '.rtf'],
+    'images': ['.jpg', '.jpeg', '.png', '.tiff', '.bmp']
 }
 
 # Собираем все разрешенные расширения в один список
@@ -35,11 +34,6 @@ PDF_IMAGE_DPI = 300  # DPI для конвертации в изображени
 PDF_IMAGE_THRESHOLD = 128  # Порог бинаризации для OCR
 PDF_MAX_WORKERS = 4  # Максимальное количество потоков для обработки
 
-# Настройки быстрого извлечения
-PREVIEW_PAGE_COUNT = 2  # Количество страниц с начала и с конца для предпросмотра
-PREVIEW_PARAGRAPH_COUNT = 2  # Количество абзацев с начала и конца
-FUZZY_THRESHOLD = 70  # Порог схожести для fuzzy matching
-
 # Настройки обработки DOC/DOCX
 DOC_MAX_WORKERS = 4  # Максимальное количество потоков для обработки
 DOC_MIN_TEXT_LENGTH = 50  # Минимальная длина текста для проверки качества извлечения
@@ -48,31 +42,33 @@ DOC_IMAGE_THRESHOLD = 128  # Порог бинаризации для OCR
 
 # Настройки логирования
 LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
-LOG_LEVEL = logging.INFO  # базовый уровень логирования
+LOG_LEVEL = logging.DEBUG  # Используем константу из модуля logging
 
 # Конфигурация логирования
 LOGGING = {
-    "version": 1,
-    "disable_existing_loggers": False,
-    "formatters": {
-        "standard": {"format": LOG_FORMAT},
-    },
-    "handlers": {
-        "console": {
-            "level": LOG_LEVEL,
-            "class": "logging.StreamHandler",
-            "formatter": "standard",
-        },
-        "file": {
-            "level": LOG_LEVEL,
-            "class": "logging.FileHandler",
-            "filename": str(LOG_FILE),
-            "formatter": "standard",
-            "encoding": "utf-8",
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'standard': {
+            'format': LOG_FORMAT
         },
     },
-    "root": {
-        "handlers": ["console", "file"],
-        "level": LOG_LEVEL,
+    'handlers': {
+        'console': {
+            'level': LOG_LEVEL,
+            'class': 'logging.StreamHandler',
+            'formatter': 'standard',
+        },
+        'file': {
+            'level': LOG_LEVEL,
+            'class': 'logging.FileHandler',
+            'filename': str(LOG_FILE),
+            'formatter': 'standard',
+            'encoding': 'utf-8',
+        },
+    },
+    'root': {
+        'handlers': ['console', 'file'],
+        'level': LOG_LEVEL,
     },
 }
