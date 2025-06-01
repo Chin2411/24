@@ -79,6 +79,7 @@ class FileMetadataWorker(QThread):
     """Worker thread for extracting metadata from files."""
 
     result = pyqtSignal(str, str, str, str)  # path, language, paper, pages/lines
+    error = pyqtSignal(str, str)  # path, error message
 
     def __init__(self, files: list[str]):
         super().__init__()
@@ -87,6 +88,8 @@ class FileMetadataWorker(QThread):
     def run(self) -> None:
         for path in self.files:
             count, language, paper = extract_metadata(Path(path))
+            if count.startswith("Ошибка") or count == "Неподдерживаемый формат":
+                self.error.emit(path, count)
             self.result.emit(path, language, paper, count)
 
 
