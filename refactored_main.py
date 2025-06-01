@@ -3,11 +3,11 @@ import logging
 import logging.config
 import os
 from pathlib import Path
+from src.common.paths import LOG_PATH
 
 # Базовая конфигурация логирования до импортов PyQt
-LOG_FILE_PATH = Path(__file__).resolve().parent / "application_logs.txt"
 logging.basicConfig(
-    filename=str(LOG_FILE_PATH),
+    filename=str(LOG_PATH),
     level=logging.INFO,
     format="[%(asctime)s][%(levelname)s] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
@@ -16,18 +16,19 @@ logging.info("Базовая конфигурация логирования и�
 
 from PyQt6.QtWidgets import QApplication
 from src.ui.main_window import MainWindow
-from config import LOGGING, LOG_FILE
+from config import LOGGING
+from src.common.paths import LOG_PATH
 
 # Настройка логирования
 def setup_logging():
     """Configure application logging."""
-    LOGGING['handlers']['file']['filename'] = str(LOG_FILE)
+    LOGGING['handlers']['file']['filename'] = str(LOG_PATH)
 
-    if not os.access(LOG_FILE.parent, os.W_OK):
-        raise RuntimeError(f"Нет прав записи в {LOG_FILE.parent}")
+    if not os.access(LOG_PATH.parent, os.W_OK):
+        raise RuntimeError(f"Нет прав записи в {LOG_PATH.parent}")
 
-    LOG_FILE.parent.mkdir(exist_ok=True)
-    LOG_FILE.touch(exist_ok=True)
+    LOG_PATH.parent.mkdir(exist_ok=True)
+    LOG_PATH.touch(exist_ok=True)
 
     # Применяем конфигурацию
     logging.config.dictConfig(LOGGING)

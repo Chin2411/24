@@ -1,12 +1,14 @@
 from pathlib import Path
 import logging
 from typing import Dict, List
+from src.common.paths import LOG_PATH
 
 # Пути
 BASE_DIR = Path(__file__).parent
 TEMP_DIR = BASE_DIR / "temp"
 EXTRACTED_FILES_DIR = BASE_DIR / "extracted_files"
-LOG_FILE = BASE_DIR / "application_logs.txt"
+# Основной лог-файл приложения
+LOG_FILE = LOG_PATH
 
 # Создаем необходимые директории
 TEMP_DIR.mkdir(exist_ok=True)

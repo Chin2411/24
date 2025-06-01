@@ -31,7 +31,7 @@ from PyQt6.QtWidgets import (
 )
 
 from config import EXTRACTED_FILES_DIR
-from config import LOG_FILE
+from src.common.paths import LOG_PATH
 from ui.log_viewer import LogViewerDialog
 from gui.workers import (
     ArchiveExtractWorker,
@@ -425,7 +425,7 @@ class MainWindow(QMainWindow):
         """Display log viewer dialog."""
         try:
             self.logger.info("Открытие окна логов")
-            dlg = LogViewerDialog(LOG_FILE, self)
+            dlg = LogViewerDialog(LOG_PATH, self)
             dlg.exec()
             self.logger.info("Окно логов закрыто")
         except Exception as exc:  # pragma: no cover - runtime errors
