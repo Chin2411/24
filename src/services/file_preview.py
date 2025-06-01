@@ -23,7 +23,7 @@ from config import (
     PREVIEW_PAGE_COUNT,
     PREVIEW_PARAGRAPH_COUNT,
 )
-from utils import fix_row
+from utils import fix_row, unpack3
 
 
 logger = logging.getLogger(__name__)
@@ -364,7 +364,7 @@ def _pdf_preview(path: Path) -> tuple[str, str | None, str | None]:
     pages = ",".join(str(i + 1) for i in page_idxs)
 
     # --- Try table extraction first ------------------------------------
-    table_text, image, table_err = _extract_tables(path, pages)
+    table_text, image, table_err = unpack3(_extract_tables(path, pages))
     if table_text:
         _save_cached_preview(path, table_text)
         return table_text, None, table_err
@@ -449,7 +449,7 @@ def _pdf_preview(path: Path) -> tuple[str, str | None, str | None]:
         logger.error(last_error)
 
     if len(text.strip()) < 50:
-        table_text, _, _ = _extract_tables(path, pages)
+        table_text, _, _ = unpack3(_extract_tables(path, pages))
         if not table_text:
             table_text = _extract_tables_cv(path, pages)
         text += table_text
@@ -532,13 +532,13 @@ def extract_preview(path: Path) -> tuple[str, str | None, str | None]:
     ext = path.suffix.lower()
     try:
         if ext == ".pdf":
-            text, img, err = _pdf_preview(path)
+            text, img, err = unpack3(_pdf_preview(path))
         elif ext in SUPPORTED_DOCS:
-            text, img, err = _docx_preview(path), None, None
+            text, img, err = unpack3((_docx_preview(path), None, None))
         elif ext in SUPPORTED_TEXT:
-            text, img, err = _text_preview(path), None, None
+            text, img, err = unpack3((_text_preview(path), None, None))
         elif ext in SUPPORTED_IMAGES:
-            text, img, err = _image_preview(path), None, None
+            text, img, err = unpack3((_image_preview(path), None, None))
         else:
             raise RuntimeError("Просмотр не поддерживается")
         if text:
@@ -549,5 +549,5 @@ def extract_preview(path: Path) -> tuple[str, str | None, str | None]:
 
 
 def extract_preview_text(path: Path) -> str:
-    text, _, _ = extract_preview(path)
+    text, _, _ = unpack3(extract_preview(path))
     return text

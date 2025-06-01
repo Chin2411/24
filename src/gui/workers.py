@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from rapidfuzz import process, fuzz
 
 from constants import REFERENCE_NAMES
+from utils import unpack3
 
 import rarfile
 import py7zr
@@ -103,7 +104,8 @@ class FileMetadataWorker(QThread):
                 path = future_map[fut]
                 duration = time.perf_counter() - start_times[fut]
                 try:
-                    count, language, paper = fut.result()
+                    result = fut.result()
+                    count, language, paper = unpack3(result)
                     if duration > 5:
                         logging.getLogger(__name__).warning(
                             "Metadata extraction for %s took %.2f sec", path, duration
@@ -129,7 +131,8 @@ class FilePreviewWorker(QThread):
     def run(self) -> None:
         start = time.perf_counter()
         try:
-            text, image, err = extract_preview(Path(self.path))
+            result = extract_preview(Path(self.path))
+            text, image, err = unpack3(result)
             duration = time.perf_counter() - start
             if duration > 5:
                 logging.getLogger(__name__).warning(
