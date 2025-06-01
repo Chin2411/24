@@ -18,6 +18,7 @@ import fitz
 import cv2
 
 from config import PDF_IMAGE_DPI, TEMP_DIR
+from utils import fix_row
 
 
 logger = logging.getLogger(__name__)
@@ -147,20 +148,29 @@ def _ocr_table_cells(img: Image.Image) -> str:
     current_y = -1
     row: list[tuple[int, int, int, int]] = []
     for box in boxes:
-        x, y, w, h = box
+        try:
+            x, y, w, h = fix_row(box, 4, 0)
+        except Exception as exc:  # pragma: no cover - unexpected errors
+            logger.error("Failed to unpack box: %s", exc)
+            continue
         if current_y == -1 or abs(y - current_y) <= h // 2:
-            row.append(box)
+            row.append((x, y, w, h))
             current_y = y
         else:
             rows.append(sorted(row, key=lambda b: b[0]))
-            row = [box]
+            row = [(x, y, w, h)]
             current_y = y
     if row:
         rows.append(sorted(row, key=lambda b: b[0]))
     lines = []
     for row_boxes in rows:
         cell_texts = []
-        for x, y, w, h in row_boxes:
+        for box in row_boxes:
+            try:
+                x, y, w, h = fix_row(box, 4, 0)
+            except Exception as exc:  # pragma: no cover - unexpected errors
+                logger.error("Failed to unpack cell box: %s", exc)
+                continue
             cell_img = img.crop((x, y, x + w, y + h))
             txt = _ocr_pytesseract(cell_img).strip().replace("\n", " ")
             cell_texts.append(txt)
@@ -217,29 +227,16 @@ def _extract_tables(path: Path, pages: str) -> tuple[str, str | None, str | None
                     n_cols = len(header)
                     lines: list[str] = []
 
-                    def _fix_row(r: list[str] | None, row_idx: int) -> list[str]:
-                        """Return row with exactly ``n_cols`` columns.
-
-                        Any missing values are replaced with an empty string,
-                        extra values are discarded.  All errors are logged so
-                        processing of other rows can continue.
-                        """
+                    lines.append(",".join(str(c) for c in fix_row(header, n_cols)))
+                    for idx, row in enumerate(tbl[1:], start=1):
                         try:
-                            cells = list(r) if r else []
-                            if len(cells) < n_cols:
-                                cells.extend([""] * (n_cols - len(cells)))
-                            elif len(cells) > n_cols:
-                                cells = cells[:n_cols]
-                            return [str(c) if c is not None else "" for c in cells]
-                        except Exception as exc:
-                            err = f"Page {p + 1}, row {row_idx}: {exc}"
+                            fixed = fix_row(row, n_cols)
+                        except Exception as exc:  # pragma: no cover - unexpected errors
+                            err = f"Page {p + 1}, row {idx}: {exc}"
                             logger.error(err)
                             row_errors.append(err)
-                            return ["" for _ in range(n_cols)]
-
-                    lines.append(",".join(_fix_row(header, 0)))
-                    for idx, row in enumerate(tbl[1:], start=1):
-                        lines.append(",".join(_fix_row(row, idx)))
+                            fixed = ["" for _ in range(n_cols)]
+                        lines.append(",".join(str(c) for c in fixed))
 
                     tables_text += "\n".join(lines) + "\n"
                     extracted = True
