@@ -29,6 +29,17 @@ from utils import fix_row, unpack3
 logger = logging.getLogger(__name__)
 
 
+def _to_gray(arr: np.ndarray) -> np.ndarray:
+    """Return grayscale numpy array without converting if already gray."""
+    if arr.ndim == 2:
+        return arr
+    if arr.shape[2] == 1:
+        return arr[:, :, 0]
+    if arr.shape[2] == 4:
+        return cv2.cvtColor(arr, cv2.COLOR_RGBA2GRAY)
+    return cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+
+
 def _cache_file_name(path: Path) -> Path:
     """Return cache file path for given source path."""
     h = hashlib.md5(str(path.resolve()).encode()).hexdigest()
@@ -124,6 +135,10 @@ def _ocr_pytesseract(img: Image.Image) -> str:
 def _ocr_easyocr(img: Image.Image) -> str:
     try:
         import easyocr
+    except Exception as exc:  # pragma: no cover - optional dependency
+        logger.error("EasyOCR import error: %s", exc)
+        return ""
+    try:
         import numpy as np
 
         reader = easyocr.Reader(["ru", "en"], gpu=False)
@@ -138,6 +153,10 @@ def _ocr_easyocr(img: Image.Image) -> str:
 def _ocr_paddle(img: Image.Image) -> str:
     try:
         from paddleocr import PaddleOCR
+    except Exception as exc:  # pragma: no cover - optional dependency
+        logger.error("PaddleOCR import error: %s", exc)
+        return ""
+    try:
         import numpy as np
 
         ocr = PaddleOCR(use_angle_cls=True, lang="ru")
@@ -164,7 +183,7 @@ def _ocr_page(page_bytes: bytes) -> str:
 
 def _ocr_table_cells(img: Image.Image) -> str:
     """Split table image into cells and run pytesseract on each."""
-    cv_img = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2GRAY)
+    cv_img = _to_gray(np.array(img))
     _, thresh = cv2.threshold(cv_img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     vert_kernel = cv2.getStructuringElement(
         cv2.MORPH_RECT, (1, max(1, img.height // 100))
@@ -218,7 +237,7 @@ def _ocr_table_cells(img: Image.Image) -> str:
 
 def _ocr_columns(img: Image.Image) -> str:
     """Detect vertical gaps and run OCR for each column."""
-    cv_img = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2GRAY)
+    cv_img = _to_gray(np.array(img))
     _, thresh = cv2.threshold(cv_img, 240, 255, cv2.THRESH_BINARY)
     white_counts = np.sum(thresh == 255, axis=0)
     threshold = int(img.height * 0.95)
@@ -252,55 +271,57 @@ def _extract_tables(path: Path, pages: str) -> tuple[str, str | None, str | None
     image_path: str | None = None
     try:
         import pdfplumber
-
-        with pdfplumber.open(str(path)) as pdf:
-            page_nums = [int(p) - 1 for p in pages.split(",") if p]
-            for p in page_nums:
-                if p >= len(pdf.pages):
-                    break
-                page = pdf.pages[p]
-                extracted = False
-                for tbl in page.extract_tables() or []:
-                    header = tbl[0] if tbl else []
-                    n_cols = len(header)
-                    lines: list[str] = []
-
-                    lines.append(",".join(str(c) for c in fix_row(header, n_cols)))
-                    for idx, row in enumerate(tbl[1:], start=1):
-                        try:
-                            fixed = fix_row(row, n_cols)
-                        except Exception as exc:  # pragma: no cover - unexpected errors
-                            err = f"Page {p + 1}, row {idx}: {exc}"
-                            logger.error(err)
-                            row_errors.append(err)
-                            fixed = ["" for _ in range(n_cols)]
-                        lines.append(",".join(str(c) for c in fixed))
-
-                    tables_text += "\n".join(lines) + "\n"
-                    extracted = True
-                if not extracted:
-                    logger.info("No table found on page %s, trying OCR", p + 1)
-                    pil_img = page.to_image(resolution=PDF_IMAGE_DPI).original
-                    col_text = _ocr_columns(pil_img)
-                    if not col_text.strip():
-                        col_text = _ocr_table_cells(_preprocess_image(pil_img))
-                    if col_text.strip():
-                        tables_text += col_text + "\n"
-                        extracted = True
-                if not extracted and image_path is None:
-                    image_path = str(Path("logs") / f"{path.stem}_page{p + 1}.png")
-                    Path(image_path).parent.mkdir(exist_ok=True)
-                    page.to_image(resolution=PDF_IMAGE_DPI).save(image_path)
-                    last_error = (
-                        f"Page {p + 1}: не удалось корректно распознать таблицу"
-                    )
-                    logger.error(last_error)
-        if tables_text:
-            error_msg = "; ".join(row_errors) if row_errors else None
-            return tables_text.strip(), None, error_msg
     except Exception as exc:  # pragma: no cover - optional dependency
-        last_error = f"Ошибка pdfplumber: {exc}"
+        last_error = f"Ошибка импорта pdfplumber: {exc}"
         logger.error(last_error)
+    else:
+        try:
+            with pdfplumber.open(str(path)) as pdf:
+                page_nums = [int(p) - 1 for p in pages.split(",") if p]
+                for p in page_nums:
+                    if p >= len(pdf.pages):
+                        break
+                    page = pdf.pages[p]
+                    extracted = False
+                    for tbl in page.extract_tables() or []:
+                        header = tbl[0] if tbl else []
+                        n_cols = len(header)
+                        lines: list[str] = []
+                        lines.append(",".join(str(c) for c in fix_row(header, n_cols)))
+                        for idx, row in enumerate(tbl[1:], start=1):
+                            try:
+                                fixed = fix_row(row, n_cols)
+                            except Exception as exc:  # pragma: no cover - unexpected errors
+                                err = f"Page {p + 1}, row {idx}: {exc}"
+                                logger.error(err)
+                                row_errors.append(err)
+                                fixed = ["" for _ in range(n_cols)]
+                            lines.append(",".join(str(c) for c in fixed))
+                        tables_text += "\n".join(lines) + "\n"
+                        extracted = True
+                    if not extracted:
+                        logger.info("No table found on page %s, trying OCR", p + 1)
+                        pil_img = page.to_image(resolution=PDF_IMAGE_DPI).original
+                        col_text = _ocr_columns(pil_img)
+                        if not col_text.strip():
+                            col_text = _ocr_table_cells(_preprocess_image(pil_img))
+                        if col_text.strip():
+                            tables_text += col_text + "\n"
+                            extracted = True
+                    if not extracted and image_path is None:
+                        image_path = str(Path("logs") / f"{path.stem}_page{p + 1}.png")
+                        Path(image_path).parent.mkdir(exist_ok=True)
+                        page.to_image(resolution=PDF_IMAGE_DPI).save(image_path)
+                        last_error = (
+                            f"Page {p + 1}: не удалось корректно распознать таблицу"
+                        )
+                        logger.error(last_error)
+            if tables_text:
+                error_msg = "; ".join(row_errors) if row_errors else None
+                return tables_text.strip(), None, error_msg
+        except Exception as exc:  # pragma: no cover - optional dependency
+            last_error = f"Ошибка pdfplumber: {exc}"
+            logger.error(last_error)
 
     # Fallback using OpenCV cell detection
     try:
@@ -434,10 +455,16 @@ def _pdf_preview(path: Path) -> tuple[str, str | None, str | None]:
                 start_times.append(time.perf_counter())
 
             for idx, fut in enumerate(futures):
-                ocr_text = fut.result()
+                try:
+                    ocr_text = fut.result()
+                except Exception as exc:
+                    logger.error("OCR task failed for page %s: %s", idx + 1, exc)
+                    continue
                 duration = time.perf_counter() - start_times[idx]
                 if duration > 5:
-                    logger.warning("OCR page %s took %.2f sec", idx + 1, duration)
+                    logger.warning(
+                        "OCR page %s took %.2f sec", idx + 1, duration
+                    )
                 text += ocr_text + "\n"
                 if len(text) >= MAX_CHARS:
                     text = text[:MAX_CHARS]
