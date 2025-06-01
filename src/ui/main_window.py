@@ -185,7 +185,6 @@ class MainWindow(QMainWindow):
                 pass
 
         worker.finished.connect(_cleanup)
-        worker.terminated.connect(_cleanup)
         worker.start()
 
     def load_files(self) -> None:
