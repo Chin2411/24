@@ -72,7 +72,7 @@ class ArchiveExtractWorker(QThread):
 
 
 from services.file_metadata import extract_metadata
-from services.file_preview import extract_preview_text
+from services.file_preview import extract_preview, extract_preview_text
 
 
 class FileMetadataWorker(QThread):
@@ -94,9 +94,10 @@ class FileMetadataWorker(QThread):
 
 
 class FilePreviewWorker(QThread):
-    """Worker thread for extracting file preview text."""
+    """Worker thread for extracting file preview text or image."""
 
     finished = pyqtSignal(str, str)  # path, preview text
+    imageReady = pyqtSignal(str, str)  # path, image path
     error = pyqtSignal(str, str)  # path, error message
 
     def __init__(self, path: str):
@@ -105,7 +106,12 @@ class FilePreviewWorker(QThread):
 
     def run(self) -> None:
         try:
-            text = extract_preview_text(Path(self.path))
-            self.finished.emit(self.path, text)
+            text, image = extract_preview(Path(self.path))
+            if image:
+                self.imageReady.emit(self.path, image)
+            if text:
+                self.finished.emit(self.path, text)
+            elif not image:
+                self.error.emit(self.path, "Не удалось создать превью")
         except Exception as exc:
             self.error.emit(self.path, str(exc))

@@ -10,7 +10,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.append(str(ROOT_DIR))
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QColor, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
@@ -223,6 +223,7 @@ class MainWindow(QMainWindow):
         self.previewStack.setCurrentWidget(self.textPreview)
         self.preview_worker = FilePreviewWorker(path)
         self.preview_worker.finished.connect(self._on_preview_ready)
+        self.preview_worker.imageReady.connect(self._on_preview_image)
         self.preview_worker.error.connect(self._on_preview_error)
         self.preview_worker.start()
 
@@ -296,6 +297,18 @@ class MainWindow(QMainWindow):
     def _on_preview_ready(self, path: str, text: str) -> None:
         self.textPreview.setPlainText(text)
         self.previewStack.setCurrentWidget(self.textPreview)
+
+    def _on_preview_image(self, path: str, image_path: str) -> None:
+        pixmap = QPixmap(image_path)
+        self.imagePreview.setPixmap(
+            pixmap.scaled(
+                self.imagePreview.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        )
+        QMessageBox.warning(self, "OCR", "Не удалось корректно распознать таблицу")
+        self.previewStack.setCurrentWidget(self.imagePreview)
 
     def _on_preview_error(self, path: str, message: str) -> None:
         self.textPreview.setPlainText(message)

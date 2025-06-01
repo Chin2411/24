@@ -8,8 +8,11 @@ from PyPDF2 import PdfReader
 from pdfminer.high_level import extract_text as pdfminer_extract_text
 from docx import Document
 from PIL import Image, ImageEnhance, ImageOps
+import numpy as np
+
 import pytesseract
 import fitz
+import cv2
 
 from config import PDF_IMAGE_DPI
 
@@ -17,8 +20,30 @@ from config import PDF_IMAGE_DPI
 logger = logging.getLogger(__name__)
 
 
+def _deskew_image(img: Image.Image) -> Image.Image:
+    """Deskew image using OpenCV."""
+    try:
+        gray = np.array(img.convert("L"))
+        coords = np.column_stack(np.where(gray > 0))
+        angle = cv2.minAreaRect(coords)[-1]
+        if angle < -45:
+            angle = -(90 + angle)
+        else:
+            angle = -angle
+        (h, w) = gray.shape[:2]
+        center = (w // 2, h // 2)
+        M = cv2.getRotationMatrix2D(center, angle, 1.0)
+        rotated = cv2.warpAffine(np.array(img), M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+        return Image.fromarray(rotated)
+    except Exception as exc:  # pragma: no cover - optional dependency
+        logger.error("Deskew failed: %s", exc)
+        return img
+
+
 def _preprocess_image(img: Image.Image) -> Image.Image:
     gray = img.convert("L")
+    gray = ImageOps.autocontrast(gray)
+    gray = _deskew_image(gray)
     enhancer = ImageEnhance.Contrast(gray)
     gray = enhancer.enhance(2.0)
     bw = gray.point(lambda x: 255 if x > 128 else 0, mode="1")
@@ -67,6 +92,43 @@ def _ocr_paddle(img: Image.Image) -> str:
     return ""
 
 
+def _ocr_table_cells(img: Image.Image) -> str:
+    """Split table image into cells and run pytesseract on each."""
+    cv_img = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2GRAY)
+    _, thresh = cv2.threshold(cv_img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    vert_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(1, img.height // 100)))
+    hor_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (max(1, img.width // 100), 1))
+    vert_lines = cv2.dilate(cv2.erode(thresh, vert_kernel, iterations=1), vert_kernel, iterations=1)
+    hor_lines = cv2.dilate(cv2.erode(thresh, hor_kernel, iterations=1), hor_kernel, iterations=1)
+    grid = cv2.bitwise_and(vert_lines, hor_lines)
+    contours, _ = cv2.findContours(grid, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    boxes = [cv2.boundingRect(c) for c in contours if cv2.contourArea(c) > 100]
+    boxes.sort(key=lambda b: (b[1], b[0]))
+    rows: list[list[tuple[int, int, int, int]]] = []
+    current_y = -1
+    row: list[tuple[int, int, int, int]] = []
+    for box in boxes:
+        x, y, w, h = box
+        if current_y == -1 or abs(y - current_y) <= h // 2:
+            row.append(box)
+            current_y = y
+        else:
+            rows.append(sorted(row, key=lambda b: b[0]))
+            row = [box]
+            current_y = y
+    if row:
+        rows.append(sorted(row, key=lambda b: b[0]))
+    lines = []
+    for row_boxes in rows:
+        cell_texts = []
+        for x, y, w, h in row_boxes:
+            cell_img = img.crop((x, y, x + w, y + h))
+            txt = _ocr_pytesseract(cell_img).strip().replace("\n", " ")
+            cell_texts.append(txt)
+        lines.append(",".join(cell_texts))
+    return "\n".join(lines)
+
+
 def _extract_tables(path: Path, pages: str) -> str:
     tables_text = ""
     try:
@@ -77,6 +139,7 @@ def _extract_tables(path: Path, pages: str) -> str:
             tables_text += table.df.to_csv(index=False) + "\n"
         if tables_text:
             return tables_text
+        logger.info("Camelot returned no tables")
     except Exception as exc:  # pragma: no cover - optional dependency
         logger.error("Camelot error: %s", exc)
     try:
@@ -92,13 +155,42 @@ def _extract_tables(path: Path, pages: str) -> str:
                 for tbl in page.extract_tables() or []:
                     df = pd.DataFrame(tbl[1:], columns=tbl[0])
                     tables_text += df.to_csv(index=False) + "\n"
-        return tables_text
+        if tables_text:
+            return tables_text
+        logger.info("pdfplumber returned no tables")
     except Exception as exc:  # pragma: no cover - optional dependency
         logger.error("pdfplumber error: %s", exc)
+
+    # --- Fallback using OpenCV cell detection ----------------------------
+    try:
+        tables_text = _extract_tables_cv(path, pages)
+        if tables_text:
+            return tables_text
+    except Exception as exc:  # pragma: no cover - unexpected errors
+        logger.error("OpenCV table extraction failed: %s", exc)
     return ""
 
 
-def _pdf_preview(path: Path) -> str:
+def _extract_tables_cv(path: Path, pages: str) -> str:
+    """Extract table text using OpenCV-based cell detection."""
+    tables_text = ""
+    page_nums = [int(p) - 1 for p in pages.split(",") if p]
+    doc = fitz.open(str(path))
+    for p in page_nums:
+        if p >= len(doc):
+            break
+        page = doc[p]
+        pix = page.get_pixmap(dpi=PDF_IMAGE_DPI)
+        img = Image.open(BytesIO(pix.tobytes()))
+        img = _preprocess_image(img)
+        text = _ocr_table_cells(img)
+        if text.strip():
+            tables_text += text + "\n"
+    doc.close()
+    return tables_text
+
+
+def _pdf_preview(path: Path) -> tuple[str, str | None]:
     """Return text preview for PDF using several fallbacks.
 
     The function tries multiple extraction methods in the following order:
@@ -125,7 +217,7 @@ def _pdf_preview(path: Path) -> str:
                 text = text[:MAX_CHARS]
                 break
         if len(text.strip()) > 50:
-            return text.strip()
+            return text.strip(), None
         last_error = "PyPDF2 не нашёл текст"
     except Exception as exc:  # pragma: no cover - unexpected errors
         last_error = f"Ошибка PyPDF2: {exc}"
@@ -136,19 +228,18 @@ def _pdf_preview(path: Path) -> str:
         text = pdfminer_extract_text(str(path), page_numbers=range(PAGE_LIMIT)) or ""
         text = text[:MAX_CHARS]
         if len(text.strip()) > 50:
-            return text.strip()
+            return text.strip(), None
         last_error = "pdfminer не нашёл текст"
     except Exception as exc:  # pragma: no cover - unexpected errors
         last_error = f"Ошибка pdfminer: {exc}"
         logger.error(last_error)
 
     pages = ",".join(str(i + 1) for i in range(PAGE_LIMIT))
-    tables = _extract_tables(path, pages)
 
     # --- OCR fallback using PyMuPDF + pytesseract -----------------------
+    text = ""
     try:
         doc = fitz.open(str(path))
-        text = ""
         for idx, page in enumerate(doc[:PAGE_LIMIT]):
             pix = page.get_pixmap(dpi=PDF_IMAGE_DPI)
             img = Image.open(BytesIO(pix.tobytes()))
@@ -169,18 +260,34 @@ def _pdf_preview(path: Path) -> str:
                 text = text[:MAX_CHARS]
                 break
         doc.close()
-        text += tables
-        if text.strip():
-            return text.strip()
-        last_error = "Не удалось извлечь текст из скана"
     except Exception as exc:  # pragma: no cover - unexpected errors
         last_error = f"Ошибка OCR: {exc}"
         logger.error(last_error)
 
-    raise RuntimeError(
-        last_error
-        or "OCR не справился, возможно, сложная таблица или качество недостаточно"
+    if len(text.strip()) < 50:
+        table_text = _extract_tables(path, pages)
+        if not table_text:
+            table_text = _extract_tables_cv(path, pages)
+        text += table_text
+
+    if text.strip():
+        return text.strip(), None
+
+    image_path = None
+    try:
+        doc = fitz.open(str(path))
+        pix = doc[0].get_pixmap(dpi=PDF_IMAGE_DPI)
+        image_path = str(Path("logs") / f"{path.stem}_preview.png")
+        Path(image_path).parent.mkdir(exist_ok=True)
+        Image.open(BytesIO(pix.tobytes())).save(image_path)
+        doc.close()
+    except Exception as exc:  # pragma: no cover - unexpected errors
+        logger.error("Failed to save preview image: %s", exc)
+
+    logger.error(
+        "Не удалось корректно распознать таблицу: %s", last_error or "unknown"
     )
+    return "", image_path
 
 
 def _docx_preview(path: Path) -> str:
@@ -234,17 +341,22 @@ SUPPORTED_TEXT = {".txt", ".csv"}
 SUPPORTED_DOCS = {".docx", ".doc"}
 
 
-def extract_preview_text(path: Path) -> str:
+def extract_preview(path: Path) -> tuple[str, str | None]:
     ext = path.suffix.lower()
     try:
         if ext == ".pdf":
             return _pdf_preview(path)
         if ext in SUPPORTED_DOCS:
-            return _docx_preview(path)
+            return _docx_preview(path), None
         if ext in SUPPORTED_TEXT:
-            return _text_preview(path)
+            return _text_preview(path), None
         if ext in SUPPORTED_IMAGES:
-            return _image_preview(path)
+            return _image_preview(path), None
     except Exception as exc:
         raise RuntimeError(str(exc))
     raise RuntimeError("Просмотр не поддерживается")
+
+
+def extract_preview_text(path: Path) -> str:
+    text, _ = extract_preview(path)
+    return text
