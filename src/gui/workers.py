@@ -126,7 +126,7 @@ class FilePreviewWorker(QThread):
     def run(self) -> None:
         start = time.perf_counter()
         try:
-            text, image = extract_preview(Path(self.path))
+            text, image, err = extract_preview(Path(self.path))
             duration = time.perf_counter() - start
             if duration > 5:
                 logging.getLogger(__name__).warning(
@@ -136,7 +136,9 @@ class FilePreviewWorker(QThread):
                 self.imageReady.emit(self.path, image)
             if text:
                 self.finished.emit(self.path, text)
-            elif not image:
+            if err:
+                self.error.emit(self.path, err)
+            elif not text and not image:
                 self.error.emit(self.path, "Не удалось создать превью")
         except Exception as exc:
             self.error.emit(self.path, str(exc))

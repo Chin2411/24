@@ -168,19 +168,39 @@ def _ocr_table_cells(img: Image.Image) -> str:
     return "\n".join(lines)
 
 
-def _extract_tables(path: Path, pages: str) -> str:
-    tables_text = ""
-    try:
-        import camelot
+def _ocr_columns(img: Image.Image) -> str:
+    """Detect vertical gaps and run OCR for each column."""
+    cv_img = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2GRAY)
+    _, thresh = cv2.threshold(cv_img, 240, 255, cv2.THRESH_BINARY)
+    white_counts = np.sum(thresh == 255, axis=0)
+    threshold = int(img.height * 0.95)
+    separators: list[int] = []
+    start = None
+    for i, count in enumerate(white_counts):
+        if count >= threshold:
+            if start is None:
+                start = i
+        elif start is not None:
+            if i - start > 5:
+                separators.append((start + i) // 2)
+            start = None
+    if start is not None and img.width - start > 5:
+        separators.append((start + img.width) // 2)
+    boundaries = [0] + separators + [img.width]
+    columns_text: list[str] = []
+    for b0, b1 in zip(boundaries, boundaries[1:]):
+        col_img = img.crop((b0, 0, b1, img.height))
+        col_img = _preprocess_image(col_img)
+        txt = _ocr_pytesseract(col_img).replace("\n", " ").strip()
+        columns_text.append(txt)
+    return "\n".join(columns_text)
 
-        tables = camelot.read_pdf(str(path), pages=pages)
-        for table in tables:
-            tables_text += table.df.to_csv(index=False) + "\n"
-        if tables_text:
-            return tables_text
-        logger.info("Camelot returned no tables")
-    except Exception as exc:  # pragma: no cover - optional dependency
-        logger.error("Camelot error: %s", exc)
+
+def _extract_tables(path: Path, pages: str) -> tuple[str, str | None, str | None]:
+    """Extract tables from PDF pages using pdfplumber and OCR fallbacks."""
+    tables_text = ""
+    last_error = ""
+    image_path: str | None = None
     try:
         import pdfplumber
         import pandas as pd
@@ -191,23 +211,42 @@ def _extract_tables(path: Path, pages: str) -> str:
                 if p >= len(pdf.pages):
                     break
                 page = pdf.pages[p]
+                extracted = False
                 for tbl in page.extract_tables() or []:
                     df = pd.DataFrame(tbl[1:], columns=tbl[0])
                     tables_text += df.to_csv(index=False) + "\n"
+                    extracted = True
+                if not extracted:
+                    logger.info("No table found on page %s, trying OCR", p + 1)
+                    pil_img = page.to_image(resolution=PDF_IMAGE_DPI).original
+                    col_text = _ocr_columns(pil_img)
+                    if not col_text.strip():
+                        col_text = _ocr_table_cells(_preprocess_image(pil_img))
+                    if col_text.strip():
+                        tables_text += col_text + "\n"
+                        extracted = True
+                if not extracted and image_path is None:
+                    image_path = str(Path("logs") / f"{path.stem}_page{p + 1}.png")
+                    Path(image_path).parent.mkdir(exist_ok=True)
+                    page.to_image(resolution=PDF_IMAGE_DPI).save(image_path)
+                    last_error = f"Page {p + 1}: не удалось корректно распознать таблицу"
+                    logger.error(last_error)
         if tables_text:
-            return tables_text
-        logger.info("pdfplumber returned no tables")
+            return tables_text.strip(), None, None
     except Exception as exc:  # pragma: no cover - optional dependency
-        logger.error("pdfplumber error: %s", exc)
+        last_error = f"Ошибка pdfplumber: {exc}"
+        logger.error(last_error)
 
-    # --- Fallback using OpenCV cell detection ----------------------------
+    # Fallback using OpenCV cell detection
     try:
         tables_text = _extract_tables_cv(path, pages)
         if tables_text:
-            return tables_text
+            return tables_text.strip(), None, None
     except Exception as exc:  # pragma: no cover - unexpected errors
-        logger.error("OpenCV table extraction failed: %s", exc)
-    return ""
+        last_error = f"OpenCV table extraction failed: {exc}"
+        logger.error(last_error)
+
+    return "", image_path, last_error or None
 
 
 def _extract_tables_cv(path: Path, pages: str) -> str:
@@ -229,7 +268,7 @@ def _extract_tables_cv(path: Path, pages: str) -> str:
     return tables_text
 
 
-def _pdf_preview(path: Path) -> tuple[str, str | None]:
+def _pdf_preview(path: Path) -> tuple[str, str | None, str | None]:
     """Return text preview for PDF using several fallbacks.
 
     The function tries multiple extraction methods in the following order:
@@ -244,6 +283,16 @@ def _pdf_preview(path: Path) -> tuple[str, str | None]:
     MAX_CHARS = 2000
 
     last_error = ""
+
+    pages = ",".join(str(i + 1) for i in range(PAGE_LIMIT))
+
+    # --- Try table extraction first ------------------------------------
+    table_text, image, table_err = _extract_tables(path, pages)
+    if table_text:
+        _save_cached_preview(path, table_text)
+        return table_text, None, None
+    if table_err and image:
+        return "", image, table_err
 
     # --- Try PyPDF2 ------------------------------------------------------
     try:
@@ -319,14 +368,14 @@ def _pdf_preview(path: Path) -> tuple[str, str | None]:
         logger.error(last_error)
 
     if len(text.strip()) < 50:
-        table_text = _extract_tables(path, pages)
+        table_text, _, _ = _extract_tables(path, pages)
         if not table_text:
             table_text = _extract_tables_cv(path, pages)
         text += table_text
 
     if text.strip():
         _save_cached_preview(path, text.strip())
-        return text.strip(), None
+        return text.strip(), None, None
 
     image_path = None
     try:
@@ -342,7 +391,7 @@ def _pdf_preview(path: Path) -> tuple[str, str | None]:
     logger.error(
         "Не удалось корректно распознать таблицу: %s", last_error or "unknown"
     )
-    return "", image_path
+    return "", image_path, last_error or "Не удалось корректно распознать таблицу"
 
 
 def _docx_preview(path: Path) -> str:
@@ -396,30 +445,30 @@ SUPPORTED_TEXT = {".txt", ".csv"}
 SUPPORTED_DOCS = {".docx", ".doc"}
 
 
-def extract_preview(path: Path) -> tuple[str, str | None]:
+def extract_preview(path: Path) -> tuple[str, str | None, str | None]:
     cached = _load_cached_preview(path)
     if cached:
-        return cached, None
+        return cached, None, None
 
     ext = path.suffix.lower()
     try:
         if ext == ".pdf":
-            text, img = _pdf_preview(path)
+            text, img, err = _pdf_preview(path)
         elif ext in SUPPORTED_DOCS:
-            text, img = _docx_preview(path), None
+            text, img, err = _docx_preview(path), None, None
         elif ext in SUPPORTED_TEXT:
-            text, img = _text_preview(path), None
+            text, img, err = _text_preview(path), None, None
         elif ext in SUPPORTED_IMAGES:
-            text, img = _image_preview(path), None
+            text, img, err = _image_preview(path), None, None
         else:
             raise RuntimeError("Просмотр не поддерживается")
         if text:
             _save_cached_preview(path, text)
-        return text, img
+        return text, img, err
     except Exception as exc:
         raise RuntimeError(str(exc))
 
 
 def extract_preview_text(path: Path) -> str:
-    text, _ = extract_preview(path)
+    text, _, _ = extract_preview(path)
     return text

@@ -309,6 +309,9 @@ class MainWindow(QMainWindow):
         )
         QMessageBox.warning(self, "OCR", "Не удалось корректно распознать таблицу")
         self.previewStack.setCurrentWidget(self.imagePreview)
+        row = self._row_map.get(path)
+        if row is not None:
+            self._highlight_row(row, "Не удалось корректно распознать таблицу")
 
     def _on_preview_error(self, path: str, message: str) -> None:
         self.textPreview.setPlainText(message)
