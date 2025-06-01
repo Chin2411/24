@@ -6,6 +6,9 @@ from typing import Tuple
 from langdetect import detect, LangDetectException
 from PyPDF2 import PdfReader
 from docx import Document
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def _detect_lang(text: str) -> str:
@@ -34,6 +37,7 @@ def _paper_format_from_dimensions(width_mm: float, height_mm: float) -> str:
 
 def _pdf_metadata(path: Path) -> Tuple[str, str, str]:
     try:
+        logger.info("Чтение PDF для метаданных: %s", path)
         reader = PdfReader(str(path))
         num_pages = len(reader.pages)
         text = ""
@@ -48,12 +52,14 @@ def _pdf_metadata(path: Path) -> Tuple[str, str, str]:
         paper = _paper_format_from_dimensions(mm_width, mm_height)
         return str(num_pages), language, paper
     except Exception as exc:
+        logger.exception("Ошибка чтения PDF %s", path)
         err = f"Ошибка: {exc}"
         return err, err, err
 
 
 def _docx_metadata(path: Path) -> Tuple[str, str, str]:
     try:
+        logger.info("Чтение DOCX для метаданных: %s", path)
         doc = Document(str(path))
         paragraphs = doc.paragraphs
         text = " ".join(p.text for p in paragraphs[:20])
@@ -68,23 +74,27 @@ def _docx_metadata(path: Path) -> Tuple[str, str, str]:
             paper = "-"
         return count, language, paper
     except Exception as exc:
+        logger.exception("Ошибка чтения DOCX %s", path)
         err = f"Ошибка: {exc}"
         return err, err, err
 
 
 def _text_metadata(path: Path) -> Tuple[str, str, str]:
     try:
+        logger.info("Чтение текстового файла для метаданных: %s", path)
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
             lines = f.readlines()
         text_sample = " ".join(lines[:50])
         language = _detect_lang(text_sample)
         return str(len(lines)), language, "-"
     except Exception as exc:
+        logger.exception("Ошибка чтения текста %s", path)
         err = f"Ошибка: {exc}"
         return err, err, err
 
 
 def extract_metadata(path: Path) -> Tuple[str, str, str]:
+    logger.info("Извлечение метаданных из %s", path)
     ext = path.suffix.lower()
     if ext == ".pdf":
         return _pdf_metadata(path)
