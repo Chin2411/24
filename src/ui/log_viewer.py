@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import shutil
 import logging
+from src.common.paths import LOG_PATH
 
 from PyQt6.QtWidgets import (
     QDialog,
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)
 class LogViewerDialog(QDialog):
     """Диалоговое окно просмотра логов."""
 
-    def __init__(self, log_file: Path, parent=None, max_lines: int = 200) -> None:
+    def __init__(self, log_file: Path = LOG_PATH, parent=None, max_lines: int = 200) -> None:
         super().__init__(parent)
         self.log_file = log_file
         self.max_lines = max_lines
@@ -59,39 +60,47 @@ class LogViewerDialog(QDialog):
 
     def load_logs(self) -> None:
         """Load last N lines from log file."""
+        for handler in logging.getLogger().handlers:
+            try:
+                handler.flush()
+            except Exception:
+                pass
         try:
-            if not self.log_file.exists() or self.log_file.stat().st_size == 0:
-                self.text.clear()
-                QMessageBox.information(
-                    self,
-                    "Логи",
-                    "Лог-файл отсутствует или не создан — проверь настройки логирования",
-                )
-                return
-            lines = self.log_file.read_text(encoding="utf-8", errors="ignore").splitlines()
-            lines = lines[-self.max_lines :]
-            self.text.clear()
-            for line in lines:
-                self._append_colored(line)
-            self.text.moveCursor(QTextCursor.MoveOperation.End)
+            lines = self.log_file.read_text(encoding="utf-8").splitlines()
+        except FileNotFoundError:
+            self.text.setPlainText(
+                "Лог-файл ещё не создан — выполните действие и нажмите «Обновить»."
+            )
+            return
         except Exception as exc:  # pragma: no cover - runtime errors
             logger.exception("Ошибка чтения логов: %s", exc)
             QMessageBox.critical(self, "Ошибка", f"Не удалось загрузить логи: {exc}")
+            return
+
+        lines = lines[-self.max_lines :]
+        self.text.clear()
+        for line in lines:
+            self._append_colored(line)
+        self.text.moveCursor(QTextCursor.MoveOperation.End)
 
     def save_logs(self) -> None:
         """Save current log file to user selected location."""
+        for handler in logging.getLogger().handlers:
+            try:
+                handler.flush()
+            except Exception:
+                pass
+        dest_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Сохранить лог",
+            str(Path.home() / "application.log"),
+            "Text Files (*.txt);;All Files (*)",
+        )
+        if not dest_path:
+            return
         try:
-            if not self.log_file.exists():
-                QMessageBox.information(self, "Логи", "Файл логов отсутствует")
-                return
-            dest_path, _ = QFileDialog.getSaveFileName(
-                self,
-                "Сохранить лог",
-                str(Path.home() / "application_logs.txt"),
-                "Text Files (*.txt);;All Files (*)",
-            )
-            if dest_path:
-                shutil.copy(str(self.log_file), dest_path)
+            with open(dest_path, "w", encoding="utf-8") as f:
+                f.write(self.text.toPlainText())
         except Exception as exc:  # pragma: no cover - runtime errors
             logger.exception("Ошибка сохранения логов: %s", exc)
             QMessageBox.critical(self, "Ошибка", f"Не удалось сохранить логи: {exc}")
