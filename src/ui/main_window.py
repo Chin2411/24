@@ -177,7 +177,15 @@ class MainWindow(QMainWindow):
     def _start_worker(self, worker: QThread) -> None:
         """Start and track a QThread worker."""
         self._workers.append(worker)
-        worker.finished.connect(lambda w=worker: self._workers.remove(w))
+
+        def _cleanup(w=worker) -> None:
+            try:
+                self._workers.remove(w)
+            except ValueError:
+                pass
+
+        worker.finished.connect(_cleanup)
+        worker.terminated.connect(_cleanup)
         worker.start()
 
     def load_files(self) -> None:
