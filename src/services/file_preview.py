@@ -217,12 +217,20 @@ def _extract_tables(path: Path, pages: str) -> tuple[str, str | None, str | None
                     n_cols = len(header)
                     lines: list[str] = []
 
-                    def _fix_row(r: list[str], row_idx: int) -> list[str]:
+                    def _fix_row(r: list[str] | None, row_idx: int) -> list[str]:
+                        """Return row with exactly ``n_cols`` columns.
+
+                        Any missing values are replaced with an empty string,
+                        extra values are discarded.  All errors are logged so
+                        processing of other rows can continue.
+                        """
                         try:
                             cells = list(r) if r else []
                             if len(cells) < n_cols:
                                 cells.extend([""] * (n_cols - len(cells)))
-                            return [str(c) if c is not None else "" for c in cells[:n_cols]]
+                            elif len(cells) > n_cols:
+                                cells = cells[:n_cols]
+                            return [str(c) if c is not None else "" for c in cells]
                         except Exception as exc:
                             err = f"Page {p + 1}, row {row_idx}: {exc}"
                             logger.error(err)
