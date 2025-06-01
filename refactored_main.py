@@ -1,6 +1,7 @@
 import sys
 import logging
 import logging.config
+import os
 from pathlib import Path
 from PyQt6.QtWidgets import QApplication
 from src.ui.main_window import MainWindow
@@ -11,10 +12,17 @@ def setup_logging():
     """Configure application logging."""
     LOGGING['handlers']['file']['filename'] = str(LOG_FILE)
 
+    if not os.access(LOG_FILE.parent, os.W_OK):
+        raise RuntimeError(f"Нет прав записи в {LOG_FILE.parent}")
+
+    LOG_FILE.parent.mkdir(exist_ok=True)
+    LOG_FILE.touch(exist_ok=True)
+
     # Применяем конфигурацию
     logging.config.dictConfig(LOGGING)
     logger = logging.getLogger(__name__)
     logger.info("Настройки логирования успешно применены")
+    logger.info("Тестовая запись логирования при старте приложения")
 
 def main():
     """Точка входа в приложение."""

@@ -272,6 +272,7 @@ def _pdf_preview(path: Path) -> tuple[str, str | None]:
         text += table_text
 
     if text.strip():
+        logger.info("Превью PDF создано для %s", path)
         return text.strip(), None
 
     image_path = None
@@ -288,6 +289,7 @@ def _pdf_preview(path: Path) -> tuple[str, str | None]:
     logger.error(
         "Не удалось корректно распознать таблицу: %s", last_error or "unknown"
     )
+    logger.info("Возвращено изображение превью для %s", path)
     return "", image_path
 
 
@@ -300,7 +302,9 @@ def _docx_preview(path: Path) -> str:
         if len(text) >= 2000:
             text = text[:2000]
             break
-    return text.strip()
+    result = text.strip()
+    logger.info("Превью DOCX создано для %s", path)
+    return result
 
 
 def _text_preview(path: Path) -> str:
@@ -315,7 +319,9 @@ def _text_preview(path: Path) -> str:
                 lines.append(line)
     except Exception as exc:
         raise RuntimeError(f"Ошибка чтения файла: {exc}")
-    return "".join(lines).strip()
+    result = "".join(lines).strip()
+    logger.info("Превью текста создано для %s", path)
+    return result
 
 
 def _image_preview(path: Path) -> str:
@@ -329,7 +335,9 @@ def _image_preview(path: Path) -> str:
             if len(text.strip()) < 20:
                 text = _ocr_paddle(img)
             if text.strip():
-                return text.strip()
+                result = text.strip()
+                logger.info("OCR изображение завершено %s", path)
+                return result
             Path("logs").mkdir(exist_ok=True)
             img.save(Path("logs") / f"{Path(path).stem}_debug.png")
             raise RuntimeError(
@@ -350,13 +358,21 @@ def extract_preview(path: Path) -> tuple[str, str | None]:
     ext = path.suffix.lower()
     try:
         if ext == ".pdf":
-            return _pdf_preview(path)
+            result = _pdf_preview(path)
+            logger.info("Превью PDF готово %s", path)
+            return result
         if ext in SUPPORTED_DOCS:
-            return _docx_preview(path), None
+            result = _docx_preview(path), None
+            logger.info("Превью DOCX готово %s", path)
+            return result
         if ext in SUPPORTED_TEXT:
-            return _text_preview(path), None
+            result = _text_preview(path), None
+            logger.info("Превью текста готово %s", path)
+            return result
         if ext in SUPPORTED_IMAGES:
-            return _image_preview(path), None
+            result = _image_preview(path), None
+            logger.info("Превью изображения готово %s", path)
+            return result
     except Exception as exc:
         raise RuntimeError(str(exc))
     raise RuntimeError("Просмотр не поддерживается")
@@ -365,4 +381,5 @@ def extract_preview(path: Path) -> tuple[str, str | None]:
 def extract_preview_text(path: Path) -> str:
     logger.info("Извлечение текстового превью из файла: %s", path)
     text, _ = extract_preview(path)
+    logger.info("Возвращено текстовое превью для %s", path)
     return text

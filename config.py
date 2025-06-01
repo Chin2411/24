@@ -63,10 +63,12 @@ LOGGING = {
         },
         'file': {
             'level': LOG_LEVEL,
-            'class': 'logging.FileHandler',
+            'class': 'logging.handlers.RotatingFileHandler',
             'filename': str(LOG_FILE),
             'formatter': 'standard',
             'encoding': 'utf-8',
+            'maxBytes': 1_048_576,  # 1 MB
+            'backupCount': 3,
         },
     },
     'root': {
