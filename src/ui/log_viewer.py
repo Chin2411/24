@@ -9,7 +9,7 @@ from utils.logging_utils import logger_flush
 from PyQt6.QtWidgets import (
     QDialog,
     QVBoxLayout,
-    QTextEdit,
+    QPlainTextEdit,
     QPushButton,
     QHBoxLayout,
     QMessageBox,
@@ -31,22 +31,32 @@ class LogViewerDialog(QDialog):
         self.resize(800, 600)
 
         layout = QVBoxLayout(self)
-        self._text = QTextEdit()
+        self._text = QPlainTextEdit()
         self._text.setReadOnly(True)
-        self._text.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+        self._text.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self._text.setStyleSheet(
+            """
+            QPlainTextEdit {
+                background:#121212;
+                color:#FFFFFF;
+                selection-background-color:#404040;
+                font-family: Menlo, monospace;
+                font-size:11px;
+            }
+            """
+        )
         layout.addWidget(self._text)
 
         p = self._text.palette()
         p.setColor(QPalette.ColorRole.Base, QColor("#121212"))
         p.setColor(QPalette.ColorRole.Text, QColor("#FFFFFF"))
         self._text.setPalette(p)
-        self._text.setStyleSheet(
-            "font-family: Menlo, monospace; font-size: 11px;"
-        )
 
         btn_layout = QHBoxLayout()
         self.refreshButton = QPushButton("Обновить")
+        self.refreshButton.setStyleSheet("")
         self.saveButton = QPushButton("Сохранить как файл")
+        self.saveButton.setStyleSheet("")
         btn_layout.addWidget(self.refreshButton)
         btn_layout.addWidget(self.saveButton)
         btn_layout.addStretch()
@@ -60,12 +70,8 @@ class LogViewerDialog(QDialog):
         self.load_logs()
 
     def _append_colored(self, line: str) -> None:
-        color = "black"
-        if "[ERROR]" in line:
-            color = "red"
-        elif "[WARNING]" in line:
-            color = "orange"
-        self._text.append(f'<span style="color:{color}">{line}</span>')
+        """Append a log line to the text widget."""
+        self._text.appendPlainText(line)
 
     def _load_log(self) -> None:
         """Internal helper to read log file and display its tail."""
