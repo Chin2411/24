@@ -127,15 +127,17 @@ class FilePreviewWorker(QThread):
 
     def run(self) -> None:
         try:
-            logger.info("Извлечение превью для %s", self.path)
-            text, image = extract_preview(Path(self.path))
+            logger.info(
+                "Preview first page only for %s", Path(self.path).name
+            )
+            text, image, err = extract_preview(Path(self.path))
             if image:
                 self.imageReady.emit(self.path, image)
             if text:
                 self.finished.emit(self.path, text)
-            elif not image:
+            elif err:
                 logger.warning("Не удалось создать превью для %s", self.path)
-                self.error.emit(self.path, "Не удалось создать превью")
+                self.error.emit(self.path, err)
             logger.info("Превью успешно создано для %s", self.path)
         except Exception as exc:
             logger.exception("Ошибка создания превью %s", self.path)

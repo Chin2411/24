@@ -39,6 +39,17 @@ pip install -r requirements.txt
 python refactored_main.py
 ```
 
+## Testing
+
+Быстрая проверка выполняется командами:
+
+```bash
+time python -m py_compile $(git ls-files '*.py')
+python benchmarks/profile_preview.py sample_dir/
+```
+
+Превью отображает только первую страницу документа ради производительности.
+
 ## Структура проекта
 
 ```
