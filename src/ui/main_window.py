@@ -374,14 +374,20 @@ class MainWindow(QMainWindow):
         self._error_map[path] = message
         row = self._row_map.get(path)
         if row is not None:
-            self._highlight_row(row, message)
+            if "неподдерж" in message.lower():
+                self._mark_unsupported(row)
+            else:
+                self._highlight_row(row, message)
 
     def _on_meta_error(self, path: str, message: str) -> None:
         self.logger.warning("Ошибка метаданных %s: %s", path, message)
         self._error_map[path] = message
         row = self._row_map.get(path)
         if row is not None:
-            self._highlight_row(row, message)
+            if "неподдерж" in message.lower():
+                self._mark_unsupported(row)
+            else:
+                self._highlight_row(row, message)
 
     def _highlight_row(self, row: int, message: str) -> None:
         for col in range(self.fileTable.columnCount()):
@@ -400,6 +406,8 @@ class MainWindow(QMainWindow):
                 item = QTableWidgetItem("-")
                 self.fileTable.setItem(row, col, item)
             item.setBackground(QColor(255, 180, 180))
+            if not item.toolTip():
+                item.setToolTip("Неподдерживаемый формат")
 
     def clear_buffer(self) -> None:
         """Remove all files from the table and internal lists."""

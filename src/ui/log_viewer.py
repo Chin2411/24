@@ -15,6 +15,8 @@ from PyQt6.QtWidgets import (
     QFileDialog,
 )
 from PyQt6.QtGui import QTextCursor, QPalette, QColor
+from collections import deque
+from src.utils.logging_utils import logger_flush
 
 logger = logging.getLogger(__name__)
 
@@ -74,8 +76,14 @@ class LogViewerDialog(QDialog):
 
     def refresh(self) -> None:
         """Reload the log file and show its contents."""
+        logger_flush()
         try:
-            text = Path(self.log_file).read_text(encoding="utf-8")
+            with open(self.log_file, "r", encoding="utf-8", errors="ignore") as f:
+                if self.max_lines:
+                    lines = deque(f, self.max_lines)
+                    text = "".join(lines)
+                else:
+                    text = f.read()
         except FileNotFoundError:
             self._text.setPlainText(
                 "Лог-файл ещё не создан — выполните действие в программе и нажмите «Обновить»."
