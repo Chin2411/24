@@ -129,58 +129,53 @@ def _ocr_table_cells(img: Image.Image) -> str:
     return "\n".join(lines)
 
 
-def _extract_tables(path: Path, pages: str) -> str:
+def _extract_tables(path: Path, page: int = 0) -> str:
+    """Extract tables from the given PDF page."""
     tables_text = ""
     try:
         import camelot
 
-        tables = camelot.read_pdf(str(path), pages=pages)
+        tables = camelot.read_pdf(str(path), pages=str(page + 1))
         for table in tables:
             tables_text += table.df.to_csv(index=False) + "\n"
         if tables_text:
             return tables_text
         logger.info("Camelot returned no tables")
     except Exception as exc:  # pragma: no cover - optional dependency
-        logger.exception("Camelot error for %s", path)
+        logger.exception("Camelot error page %s for %s", page, path)
     try:
         import pdfplumber
         import pandas as pd
 
         with pdfplumber.open(str(path)) as pdf:
-            page_nums = [int(p) - 1 for p in pages.split(",") if p]
-            for p in page_nums:
-                if p >= len(pdf.pages):
-                    break
-                page = pdf.pages[p]
-                for tbl in page.extract_tables() or []:
+            if page < len(pdf.pages):
+                p = pdf.pages[page]
+                for tbl in p.extract_tables() or []:
                     df = pd.DataFrame(tbl[1:], columns=tbl[0])
                     tables_text += df.to_csv(index=False) + "\n"
         if tables_text:
             return tables_text
         logger.info("pdfplumber returned no tables")
     except Exception as exc:  # pragma: no cover - optional dependency
-        logger.exception("pdfplumber error for %s", path)
+        logger.exception("pdfplumber error page %s for %s", page, path)
 
     # --- Fallback using OpenCV cell detection ----------------------------
     try:
-        tables_text = _extract_tables_cv(path, pages)
+        tables_text = _extract_tables_cv(path, page)
         if tables_text:
             return tables_text
     except Exception as exc:  # pragma: no cover - unexpected errors
-        logger.exception("OpenCV table extraction failed for %s", path)
+        logger.exception("OpenCV table extraction failed page %s for %s", page, path)
     return ""
 
 
-def _extract_tables_cv(path: Path, pages: str) -> str:
-    """Extract table text using OpenCV-based cell detection."""
+def _extract_tables_cv(path: Path, page: int = 0) -> str:
+    """Extract table text from a PDF page using OpenCV."""
     tables_text = ""
-    page_nums = [int(p) - 1 for p in pages.split(",") if p]
     doc = fitz.open(str(path))
-    for p in page_nums:
-        if p >= len(doc):
-            break
-        page = doc[p]
-        pix = page.get_pixmap(dpi=PDF_IMAGE_DPI)
+    if page < len(doc):
+        p = doc[page]
+        pix = p.get_pixmap(dpi=PDF_IMAGE_DPI)
         img = Image.open(BytesIO(pix.tobytes()))
         img = _preprocess_image(img)
         text = _ocr_table_cells(img)
@@ -191,18 +186,19 @@ def _extract_tables_cv(path: Path, pages: str) -> str:
 
 
 def _pdf_preview(path: Path) -> tuple[str, str | None]:
-    """Return text preview for PDF using several fallbacks.
+    """Return text preview for the first page of a PDF.
 
     The function tries multiple extraction methods in the following order:
-    1. ``PyPDF2`` text layer extraction for the first few pages.
+    1. ``PyPDF2`` text layer extraction for the first page.
     2. ``pdfminer.six`` extraction if PyPDF2 returned no text.
     3. ``PyMuPDF`` OCR for scanned pages using ``pytesseract``.
 
-    Raises ``RuntimeError`` if no text could be extracted.
+    Returns tuple ``(text, image_path)``. ``image_path`` is provided when text
+    couldn't be extracted.
     """
 
     logger.info("Извлечение превью PDF: %s", path)
-    PAGE_LIMIT = 3
+    page_num = 0
     MAX_CHARS = 2000
 
     last_error = ""
@@ -210,13 +206,8 @@ def _pdf_preview(path: Path) -> tuple[str, str | None]:
     # --- Try PyPDF2 ------------------------------------------------------
     try:
         reader = PdfReader(str(path))
-        text = ""
-        for page in reader.pages[:PAGE_LIMIT]:
-            t = page.extract_text() or ""
-            text += t
-            if len(text) >= MAX_CHARS:
-                text = text[:MAX_CHARS]
-                break
+        page = reader.pages[page_num]
+        text = (page.extract_text() or "")[:MAX_CHARS]
         if len(text.strip()) > 50:
             return text.strip(), None
         last_error = "PyPDF2 не нашёл текст"
@@ -226,7 +217,7 @@ def _pdf_preview(path: Path) -> tuple[str, str | None]:
 
     # --- Try pdfminer ----------------------------------------------------
     try:
-        text = pdfminer_extract_text(str(path), page_numbers=range(PAGE_LIMIT)) or ""
+        text = pdfminer_extract_text(str(path), page_numbers=[page_num]) or ""
         text = text[:MAX_CHARS]
         if len(text.strip()) > 50:
             return text.strip(), None
@@ -235,40 +226,39 @@ def _pdf_preview(path: Path) -> tuple[str, str | None]:
         last_error = f"Ошибка pdfminer: {exc}"
         logger.exception(last_error)
 
-    pages = ",".join(str(i + 1) for i in range(PAGE_LIMIT))
+    pages = str(page_num + 1)
 
     # --- OCR fallback using PyMuPDF + pytesseract -----------------------
     text = ""
     try:
         doc = fitz.open(str(path))
-        for idx, page in enumerate(doc[:PAGE_LIMIT]):
+        if page_num < len(doc):
+            page = doc[page_num]
             pix = page.get_pixmap(dpi=PDF_IMAGE_DPI)
             img = Image.open(BytesIO(pix.tobytes()))
-            if idx == 0:
-                try:
-                    Path("logs").mkdir(exist_ok=True)
-                    img.save(Path("logs") / f"{path.stem}_page1.png")
-                except Exception as exc:  # pragma: no cover - optional
-                    logger.exception("Failed to save debug image")
+            try:
+                Path("logs").mkdir(exist_ok=True)
+                img.save(Path("logs") / f"{path.stem}_page1.png")
+            except Exception as exc:  # pragma: no cover - optional
+                logger.exception("Failed to save debug image")
             img = _preprocess_image(img)
             ocr_text = _ocr_pytesseract(img)
             if len(ocr_text.strip()) < 20:
                 ocr_text = _ocr_easyocr(img)
             if len(ocr_text.strip()) < 20:
                 ocr_text = _ocr_paddle(img)
-            text += ocr_text + "\n"
+            text += ocr_text
             if len(text) >= MAX_CHARS:
                 text = text[:MAX_CHARS]
-                break
         doc.close()
     except Exception as exc:  # pragma: no cover - unexpected errors
         last_error = f"Ошибка OCR: {exc}"
         logger.exception(last_error)
 
     if len(text.strip()) < 50:
-        table_text = _extract_tables(path, pages)
+        table_text = _extract_tables(path, page_num)
         if not table_text:
-            table_text = _extract_tables_cv(path, pages)
+            table_text = _extract_tables_cv(path, page_num)
         text += table_text
 
     if text.strip():
@@ -278,7 +268,7 @@ def _pdf_preview(path: Path) -> tuple[str, str | None]:
     image_path = None
     try:
         doc = fitz.open(str(path))
-        pix = doc[0].get_pixmap(dpi=PDF_IMAGE_DPI)
+        pix = doc[page_num].get_pixmap(dpi=PDF_IMAGE_DPI)
         image_path = str(Path("logs") / f"{path.stem}_preview.png")
         Path(image_path).parent.mkdir(exist_ok=True)
         Image.open(BytesIO(pix.tobytes())).save(image_path)
@@ -296,13 +286,8 @@ def _pdf_preview(path: Path) -> tuple[str, str | None]:
 def _docx_preview(path: Path) -> str:
     logger.info("Извлечение превью DOCX: %s", path)
     doc = Document(str(path))
-    text = ""
-    for para in doc.paragraphs:
-        text += para.text + "\n"
-        if len(text) >= 2000:
-            text = text[:2000]
-            break
-    result = text.strip()
+    text = "\n".join(p.text for p in doc.paragraphs[:25])
+    result = text.strip()[:2000]
     logger.info("Превью DOCX создано для %s", path)
     return result
 
@@ -312,7 +297,7 @@ def _text_preview(path: Path) -> str:
     lines: list[str] = []
     try:
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
-            for _ in range(50):
+            for _ in range(20):
                 line = f.readline()
                 if not line:
                     break
@@ -322,6 +307,21 @@ def _text_preview(path: Path) -> str:
     result = "".join(lines).strip()
     logger.info("Превью текста создано для %s", path)
     return result
+
+
+def _excel_preview(path: Path) -> str:
+    """Return CSV preview for Excel files."""
+    logger.info("Извлечение превью Excel: %s", path)
+    try:
+        import pandas as pd
+
+        df = pd.read_excel(path, nrows=20)
+        result = df.to_csv(index=False)
+        logger.info("Превью Excel создано для %s", path)
+        return result
+    except Exception as exc:
+        logger.exception("Ошибка чтения Excel %s", path)
+        raise RuntimeError(f"Ошибка чтения Excel: {exc}")
 
 
 def _image_preview(path: Path) -> str:
@@ -350,36 +350,42 @@ def _image_preview(path: Path) -> str:
 
 SUPPORTED_IMAGES = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp"}
 SUPPORTED_TEXT = {".txt", ".csv"}
+SUPPORTED_EXCEL = {".xlsx", ".xls"}
 SUPPORTED_DOCS = {".docx", ".doc"}
 
 
-def extract_preview(path: Path) -> tuple[str, str | None]:
+def extract_preview(path: Path) -> tuple[str, str | None, str]:
+    """Return preview text or image for supported file types."""
     logger.info("Извлечение превью файла: %s", path)
     ext = path.suffix.lower()
     try:
         if ext == ".pdf":
-            result = _pdf_preview(path)
+            text, image = _pdf_preview(path)
             logger.info("Превью PDF готово %s", path)
-            return result
+            return text, image, ""
         if ext in SUPPORTED_DOCS:
-            result = _docx_preview(path), None
+            text = _docx_preview(path)
             logger.info("Превью DOCX готово %s", path)
-            return result
+            return text, None, ""
         if ext in SUPPORTED_TEXT:
-            result = _text_preview(path), None
+            text = _text_preview(path)
             logger.info("Превью текста готово %s", path)
-            return result
+            return text, None, ""
+        if ext in SUPPORTED_EXCEL:
+            text = _excel_preview(path)
+            logger.info("Превью Excel готово %s", path)
+            return text, None, ""
         if ext in SUPPORTED_IMAGES:
-            result = _image_preview(path), None
+            text = _image_preview(path)
             logger.info("Превью изображения готово %s", path)
-            return result
+            return text, None, ""
     except Exception as exc:
-        raise RuntimeError(str(exc))
-    raise RuntimeError("Просмотр не поддерживается")
+        return "", None, str(exc)
+    return "", None, "Просмотр не поддерживается"
 
 
 def extract_preview_text(path: Path) -> str:
     logger.info("Извлечение текстового превью из файла: %s", path)
-    text, _ = extract_preview(path)
+    text, _, _ = extract_preview(path)
     logger.info("Возвращено текстовое превью для %s", path)
     return text
