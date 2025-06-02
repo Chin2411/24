@@ -4,7 +4,6 @@ from pathlib import Path
 import shutil
 import logging
 from src.common.paths import LOG_PATH
-from utils.logging_utils import logger_flush
 
 from PyQt6.QtWidgets import (
     QDialog,
@@ -62,22 +61,21 @@ class LogViewerDialog(QDialog):
         btn_layout.addStretch()
         layout.addLayout(btn_layout)
 
-        self.refreshButton.clicked.connect(self.load_logs)
+        self.refreshButton.clicked.connect(self.refresh)
         self.saveButton.clicked.connect(self.save_logs)
 
     def showEvent(self, event) -> None:  # type: ignore[override]
         super().showEvent(event)
-        self.load_logs()
+        self.refresh()
 
     def _append_colored(self, line: str) -> None:
         """Append a log line to the text widget."""
         self._text.appendPlainText(line)
 
-    def _load_log(self) -> None:
-        """Internal helper to read log file and display its tail."""
-        logger_flush()
+    def refresh(self) -> None:
+        """Reload the log file and show its contents."""
         try:
-            lines = self.log_file.read_text(encoding="utf-8").splitlines()
+            text = Path(self.log_file).read_text(encoding="utf-8")
         except FileNotFoundError:
             self._text.setPlainText(
                 "Лог-файл ещё не создан — выполните действие в программе и нажмите «Обновить»."
@@ -88,19 +86,15 @@ class LogViewerDialog(QDialog):
             QMessageBox.critical(self, "Ошибка", f"Не удалось загрузить логи: {exc}")
             return
 
-        lines = lines[-self.max_lines :]
-        self._text.clear()
-        for line in lines:
-            self._append_colored(line)
+        self._text.setPlainText(text)
         self._text.moveCursor(QTextCursor.MoveOperation.End)
 
     def load_logs(self) -> None:
-        """Public slot to refresh log contents."""
-        self._load_log()
+        """Backward compatibility wrapper for :py:meth:`refresh`."""
+        self.refresh()
 
     def save_logs(self) -> None:
         """Save current log file to user selected location."""
-        logger_flush()
         dest_path, _ = QFileDialog.getSaveFileName(
             self,
             "Сохранить лог",

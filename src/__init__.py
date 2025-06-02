@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import sys
-from logging.handlers import RotatingFileHandler
 
 from src.common.paths import LOG_PATH
 
@@ -15,13 +14,10 @@ def setup_logging() -> None:
     datefmt = "%Y-%m-%d %H:%M:%S"
     formatter = logging.Formatter(fmt, datefmt)
 
-    file_handler = RotatingFileHandler(
-        LOG_PATH,
-        maxBytes=1_048_576,
-        backupCount=3,
-        encoding="utf-8",
-    )
+    file_handler = logging.FileHandler(LOG_PATH, encoding="utf-8")
     file_handler.setFormatter(formatter)
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.flush = file_handler.stream.flush  # type: ignore[attr-defined]
 
     stream_handler = logging.StreamHandler(sys.stderr)
     stream_handler.setFormatter(formatter)

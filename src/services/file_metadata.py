@@ -12,8 +12,9 @@ logger = logging.getLogger(__name__)
 
 
 def _detect_lang(text: str) -> str:
+    snippet = text[:5000]
     try:
-        return detect(text)
+        return detect(snippet)
     except LangDetectException:
         return "-"
 
