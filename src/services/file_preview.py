@@ -310,13 +310,27 @@ def _text_preview(path: Path) -> str:
 
 
 def _xlsx_preview(path: Path, rows: int = 30) -> str:
-    """Return plain-text preview of the first ``rows`` rows of the first sheet."""
-    import pandas as pd  # pandas>=2.2, openpyxl required
+    """Return text preview of the first ``rows`` rows of the first sheet.
+
+    ``openpyxl`` is used directly to avoid heavy pandas import and to work
+    reliably even when ``xlrd`` is not installed. Only the first worksheet is
+    read for performance reasons.
+    """
     try:
-        df = pd.read_excel(path, nrows=rows, engine="openpyxl")
-    except ImportError as exc:  # pragma: no cover - optional dependency
+        from openpyxl import load_workbook
+    except Exception as exc:  # pragma: no cover - optional dependency
         raise RuntimeError(f"Missing openpyxl: {exc}") from exc
-    return df.to_string(index=False, header=True)
+
+    wb = load_workbook(path, read_only=True, data_only=True)
+    ws = wb.active
+    preview_lines: list[str] = []
+    for i, row in enumerate(ws.iter_rows(values_only=True)):
+        values = ["" if v is None else str(v) for v in row]
+        preview_lines.append("\t".join(values))
+        if i + 1 >= rows:
+            break
+    wb.close()
+    return "\n".join(preview_lines)
 
 
 def _excel_preview(path: Path) -> str:

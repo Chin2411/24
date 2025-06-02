@@ -16,6 +16,7 @@ docxtpl>=0.9.0
 rarfile>=4.0
 py7zr>=0.20.0
 langdetect>=1.0.9
+langid>=1.1.6
 python-magic>=0.4.27
 fuzzywuzzy>=0.18.0
 python-Levenshtein>=0.21.0

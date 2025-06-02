@@ -8,14 +8,31 @@ from PyPDF2 import PdfReader
 from docx import Document
 import logging
 
+from openpyxl import load_workbook
+
 logger = logging.getLogger(__name__)
 
 
 def _detect_lang(text: str) -> str:
-    snippet = text[:5000]
+    """Detect language of the given text snippet.
+
+    ``langdetect`` is used primarily with a fallback to ``langid`` for cases
+    when the first detector fails. If detection is not possible, ``"-"`` is
+    returned.
+    """
+    snippet = text.strip()[:5000]
+    if not snippet:
+        return "-"
     try:
         return detect(snippet)
     except LangDetectException:
+        pass
+    try:  # pragma: no cover - optional fallback
+        import langid
+
+        lang, _ = langid.classify(snippet)
+        return lang
+    except Exception:
         return "-"
 
 
@@ -117,6 +134,31 @@ def _text_metadata(path: Path) -> Tuple[str, str, str]:
         return err, err, err
 
 
+def _excel_metadata(path: Path) -> Tuple[str, str, str]:
+    """Extract row count and language from Excel files."""
+    try:
+        logger.info("Чтение Excel для метаданных: %s", path)
+        wb = load_workbook(path, read_only=True, data_only=True)
+        ws = wb.active
+        texts: list[str] = []
+        for row in ws.iter_rows(max_row=30, values_only=True):
+            texts.append(" ".join(str(c) for c in row if c is not None))
+        language = _detect_lang(" ".join(texts))
+        result = (str(ws.max_row), language, "-")
+        wb.close()
+        logger.info(
+            "EXCEL метаданные %s: rows=%s lang=%s",
+            path,
+            result[0],
+            result[1],
+        )
+        return result
+    except Exception as exc:
+        logger.exception("Ошибка чтения Excel %s", path)
+        err = f"Ошибка: {exc}"
+        return err, err, err
+
+
 def extract_metadata(path: Path) -> Tuple[str, str, str]:
     logger.info("Извлечение метаданных из %s", path)
     ext = path.suffix.lower()
@@ -132,6 +174,10 @@ def extract_metadata(path: Path) -> Tuple[str, str, str]:
         result = _text_metadata(path)
         logger.info("Завершено извлечение метаданных TEXT %s", path)
         return result
+    if ext in {".xlsx", ".xls"}:
+        result = _excel_metadata(path)
+        logger.info("Завершено извлечение метаданных EXCEL %s", path)
+        return result
     msg = "Неподдерживаемый формат"
-    return msg, msg, msg
+    return msg, "-", "-"
 
