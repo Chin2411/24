@@ -38,7 +38,21 @@ from gui.workers import (
     FileMetadataWorker,
     FilePreviewWorker,
 )
+from services.file_preview import (
+    SUPPORTED_IMAGES,
+    SUPPORTED_TEXT,
+    SUPPORTED_EXCEL,
+    SUPPORTED_DOCS,
+)
 from concurrent.futures import ThreadPoolExecutor
+
+SUPPORTED_PREVIEW_EXTS = (
+    SUPPORTED_IMAGES
+    | SUPPORTED_TEXT
+    | SUPPORTED_EXCEL
+    | SUPPORTED_DOCS
+    | {".pdf"}
+)
 
 
 class MainWindow(QMainWindow):
@@ -221,6 +235,8 @@ class MainWindow(QMainWindow):
             self._all_paths.add(abs_path)
             new_files.append(abs_path)
             self.logger.info("Добавлен файл %s", abs_path)
+            if path_obj.suffix.lower() not in SUPPORTED_PREVIEW_EXTS:
+                self._mark_unsupported(row)
 
         if not new_files:
             return
@@ -303,6 +319,8 @@ class MainWindow(QMainWindow):
             self._row_map[abs_path] = row
             self._all_paths.add(abs_path)
             new_files.append(abs_path)
+            if path.suffix.lower() not in SUPPORTED_PREVIEW_EXTS:
+                self._mark_unsupported(row)
 
         if new_files:
             # start metadata extraction in background
@@ -374,6 +392,14 @@ class MainWindow(QMainWindow):
             item.setBackground(QColor("#ffc0cb"))
             if not item.toolTip():
                 item.setToolTip(message)
+
+    def _mark_unsupported(self, row: int) -> None:
+        for col in range(self.fileTable.columnCount()):
+            item = self.fileTable.item(row, col)
+            if item is None:
+                item = QTableWidgetItem("-")
+                self.fileTable.setItem(row, col, item)
+            item.setBackground(QColor(255, 180, 180))
 
     def clear_buffer(self) -> None:
         """Remove all files from the table and internal lists."""

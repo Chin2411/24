@@ -309,6 +309,16 @@ def _text_preview(path: Path) -> str:
     return result
 
 
+def _xlsx_preview(path: Path, rows: int = 30) -> str:
+    """Return plain-text preview of the first ``rows`` rows of the first sheet."""
+    import pandas as pd  # pandas>=2.2, openpyxl required
+    try:
+        df = pd.read_excel(path, nrows=rows, engine="openpyxl")
+    except ImportError as exc:  # pragma: no cover - optional dependency
+        raise RuntimeError(f"Missing openpyxl: {exc}") from exc
+    return df.to_string(index=False, header=True)
+
+
 def _excel_preview(path: Path) -> str:
     """Return CSV preview for Excel files."""
     logger.info("Извлечение превью Excel: %s", path)
@@ -372,7 +382,7 @@ def extract_preview(path: Path) -> tuple[str, str | None, str]:
             logger.info("Превью текста готово %s", path)
             return text, None, ""
         if ext in SUPPORTED_EXCEL:
-            text = _excel_preview(path)
+            text = _xlsx_preview(path)
             logger.info("Превью Excel готово %s", path)
             return text, None, ""
         if ext in SUPPORTED_IMAGES:
