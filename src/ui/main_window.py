@@ -31,6 +31,8 @@ from PyQt6.QtWidgets import (
 )
 
 from config import EXTRACTED_FILES_DIR
+import difflib
+from data_analysis.reference_data import reference_data
 from src.common.paths import LOG_PATH
 from ui.log_viewer import LogViewerDialog
 from gui.workers import (
@@ -417,9 +419,24 @@ class MainWindow(QMainWindow):
                 item.setToolTip("Неподдерживаемый формат")
 
     def perform_check(self) -> None:
-        """Placeholder for verification action."""
+        """Check file names against reference_data using fuzzy matching."""
         self.logger.info("Кнопка 'Выполнить сверку' нажата")
-        QMessageBox.information(self, "Info", "Функция проверки не реализована.")
+        results: list[str] = []
+        keys_lower = {k.lower(): k for k in reference_data}
+        for path, row in self._row_map.items():
+            name = Path(path).stem
+            match = None
+            matches = difflib.get_close_matches(name.lower(), keys_lower.keys(), n=1, cutoff=0.8)
+            if matches:
+                match = keys_lower[matches[0]]
+                translation = reference_data[match]
+                results.append(f"{name} → {translation}")
+            else:
+                results.append(f"{name} → нет совпадений")
+        if results:
+            QMessageBox.information(self, "Результаты сверки", "\n".join(results))
+        else:
+            QMessageBox.information(self, "Результаты сверки", "Нет файлов для проверки")
 
     def clear_buffer(self) -> None:
         """Remove all files from the table and internal lists."""
