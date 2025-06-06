@@ -167,7 +167,13 @@ class MainWindow(QMainWindow):
             bottom_panel.addWidget(btn)
         main_layout.addLayout(bottom_panel)
 
-        # Соединяем кнопки с заглушками
+        # Настраиваем подключения сигналов и слотов
+        self.setup_connections()
+
+        self.fileTable.itemSelectionChanged.connect(self._preview_selected)
+
+    def setup_connections(self) -> None:
+        """Connect UI buttons to their respective slots."""
         for btn in (
             self.clearBufferButton,
             self.runVerificationButton,
@@ -184,9 +190,8 @@ class MainWindow(QMainWindow):
         self.loadArchiveButton.clicked.connect(self.load_archive)
         self.loadFilesButton.clicked.connect(self.load_files)
         self.clearBufferButton.clicked.connect(self.clear_buffer)
+        self.runVerificationButton.clicked.connect(self.perform_check)
         self.viewLogsButton.clicked.connect(self.show_logs)
-
-        self.fileTable.itemSelectionChanged.connect(self._preview_selected)
 
     def _start_worker(self, worker: QThread) -> None:
         """Start and track a QThread worker."""
@@ -203,6 +208,7 @@ class MainWindow(QMainWindow):
 
     def load_files(self) -> None:
         """Open file dialog and add selected files to the table."""
+        self.logger.info("Кнопка 'Загрузить файлы' нажата")
         files, _ = QFileDialog.getOpenFileNames(
             self,
             "Выберите файлы",
@@ -279,6 +285,7 @@ class MainWindow(QMainWindow):
 
     def load_archive(self) -> None:
         """Open file dialog and extract selected archive in a background thread."""
+        self.logger.info("Кнопка 'Загрузить архив' нажата")
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Выберите архив",
@@ -409,8 +416,14 @@ class MainWindow(QMainWindow):
             if not item.toolTip():
                 item.setToolTip("Неподдерживаемый формат")
 
+    def perform_check(self) -> None:
+        """Placeholder for verification action."""
+        self.logger.info("Кнопка 'Выполнить сверку' нажата")
+        QMessageBox.information(self, "Info", "Функция проверки не реализована.")
+
     def clear_buffer(self) -> None:
         """Remove all files from the table and internal lists."""
+        self.logger.info("Кнопка 'Очистить буфер' нажата")
         self.logger.info("Очистка буфера")
         self.fileTable.setRowCount(0)
         self._row_map.clear()
@@ -457,6 +470,7 @@ class MainWindow(QMainWindow):
 
     def show_logs(self) -> None:
         """Display log viewer dialog."""
+        self.logger.info("Кнопка 'Логи' нажата")
         try:
             self.logger.info("Открытие окна логов")
             dlg = LogViewerDialog(LOG_PATH, self)
