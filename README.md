@@ -4,9 +4,12 @@
 
 ## Требования
 
-- Python 3.9+
+
+- Python 3.11+
 - PyQt6
 - Дополнительные зависимости указаны в `requirements.txt`
+- Для корректного определения языка используется `langid`
+- Для улучшенного OCR потребуются `easyocr`, `paddleocr`, `camelot-py`, `pdfplumber`, `tabula-py` и `opencv-python`
 
 ## Установка
 
@@ -36,6 +39,17 @@ pip install -r requirements.txt
 ```bash
 python refactored_main.py
 ```
+
+## Testing
+
+Быстрая проверка выполняется командами:
+
+```bash
+time python -m py_compile $(git ls-files '*.py')
+python benchmarks/profile_preview.py sample_dir/
+```
+
+Превью отображает только первую страницу документа ради производительности.
 
 ## Структура проекта
 
@@ -82,6 +96,7 @@ document-processor/
 ## Функциональность
 
 - Загрузка и анализ документов различных форматов (PDF, DOCX, XLSX, изображения)
+- Предпросмотр Excel-файлов (первые строки таблицы)
 - Извлечение метаданных и определение типа документа
 - Добавление штампов на документы
 - Создание архивов с переименованными файлами

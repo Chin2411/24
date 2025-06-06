@@ -1,13 +1,14 @@
-import os
 from pathlib import Path
 import logging
-from typing import Dict, List, Set, FrozenSet
+from typing import Dict, List
+from src.common.paths import LOG_PATH
 
 # Пути
 BASE_DIR = Path(__file__).parent
 TEMP_DIR = BASE_DIR / "temp"
 EXTRACTED_FILES_DIR = BASE_DIR / "extracted_files"
-LOG_FILE = BASE_DIR / "application_logs.txt"
+# Основной лог-файл приложения
+LOG_FILE = LOG_PATH
 
 # Создаем необходимые директории
 TEMP_DIR.mkdir(exist_ok=True)
@@ -42,7 +43,8 @@ DOC_IMAGE_DPI = 300  # DPI для конвертации в изображени
 DOC_IMAGE_THRESHOLD = 128  # Порог бинаризации для OCR
 
 # Настройки логирования
-LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
+LOG_FORMAT = "[%(asctime)s][%(levelname)s] %(message)s"
+LOG_DATEFMT = "%Y-%m-%d %H:%M:%S"
 LOG_LEVEL = logging.DEBUG  # Используем константу из модуля logging
 
 # Конфигурация логирования
@@ -51,7 +53,8 @@ LOGGING = {
     'disable_existing_loggers': False,
     'formatters': {
         'standard': {
-            'format': LOG_FORMAT
+            'format': LOG_FORMAT,
+            'datefmt': LOG_DATEFMT,
         },
     },
     'handlers': {
@@ -62,10 +65,12 @@ LOGGING = {
         },
         'file': {
             'level': LOG_LEVEL,
-            'class': 'logging.FileHandler',
+            'class': 'logging.handlers.RotatingFileHandler',
             'filename': str(LOG_FILE),
             'formatter': 'standard',
             'encoding': 'utf-8',
+            'maxBytes': 1_048_576,  # 1 MB
+            'backupCount': 3,
         },
     },
     'root': {
@@ -73,15 +78,3 @@ LOGGING = {
         'level': LOG_LEVEL,
     },
 }
-
-# Путь для распаковки архивов (legacy, если используется где-то в коде)
-UNPACK_PATH = "unpacked_files"
-
-# Допустимые расширения файлов (legacy, если используется где-то в коде)
-FILES_EXTENSIONS = [".docx", ".pdf", ".txt"]
-
-# Путь к справочнику (legacy, если используется где-то в коде)
-HANDBOOK_PATH = "handbook.xlsx"
-
-# Импортируем справочные данные
-# from data_analysis import reference_data 
