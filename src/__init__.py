@@ -4,6 +4,7 @@ import logging
 import sys
 
 from src.common.paths import LOG_PATH
+from config import LOG_LEVEL
 
 
 def setup_logging() -> None:
@@ -16,14 +17,15 @@ def setup_logging() -> None:
 
     file_handler = logging.FileHandler(LOG_PATH, encoding="utf-8")
     file_handler.setFormatter(formatter)
-    file_handler.setLevel(logging.DEBUG)
+    file_handler.setLevel(LOG_LEVEL)
     file_handler.flush = file_handler.stream.flush  # type: ignore[attr-defined]
 
     stream_handler = logging.StreamHandler(sys.stderr)
     stream_handler.setFormatter(formatter)
+    stream_handler.setLevel(LOG_LEVEL)
 
     root_logger = logging.getLogger()
-    root_logger.setLevel(logging.INFO)
+    root_logger.setLevel(LOG_LEVEL)
     root_logger.handlers.clear()
     root_logger.addHandler(file_handler)
     root_logger.addHandler(stream_handler)
